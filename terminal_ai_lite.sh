@@ -103,8 +103,8 @@ get_ai_response() {
     Return only the commands, one per line, without any explanations or markdown formatting.
     Use Termux-specific commands where appropriate (e.g., pkg instead of apt)."
     
-    # Call Gemini API without color escape sequences
-    echo "Thinking..."
+    # Call Gemini API without color escape sequences - to stderr to avoid being captured as command
+    echo "Thinking..." >&2
     
     local response
     response=$(curl -s -X POST "https://generativelanguage.googleapis.com/v1beta/models/$MODEL:generateContent?key=$API_KEY" \
@@ -220,11 +220,11 @@ main() {
         fi
         
         # Get AI response
+        echo "I'll run these commands for you:" >&2
         commands=$(get_ai_response "$user_input")
         
         # Execute each command
         if [ -n "$commands" ]; then
-            echo "I'll run these commands for you:"
             echo "$commands" | while read -r command; do
                 if [ -n "$command" ]; then
                     execute_command "$command"
