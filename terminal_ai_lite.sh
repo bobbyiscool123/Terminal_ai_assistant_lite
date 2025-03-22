@@ -3,14 +3,28 @@
 # Terminal AI Assistant Lite
 # A lightweight version for Linux terminals with minimal dependencies
 
-# Colors - Update for Windows compatibility
-RED='\e[0;31m'
-GREEN='\e[0;32m'
-YELLOW='\e[0;33m'
-BLUE='\e[0;34m'
-MAGENTA='\e[0;35m'
-CYAN='\e[0;36m'
-NC='\e[0m' # No Color
+# Detect if running in Windows environment
+if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" || "$OSTYPE" == "cygwin" ]]; then
+    # In Windows, disable colors
+    IS_WINDOWS=true
+    RED=''
+    GREEN=''
+    YELLOW=''
+    BLUE=''
+    MAGENTA=''
+    CYAN=''
+    NC=''
+else
+    # Colors for Unix/Linux
+    IS_WINDOWS=false
+    RED='\e[0;31m'
+    GREEN='\e[0;32m'
+    YELLOW='\e[0;33m'
+    BLUE='\e[0;34m'
+    MAGENTA='\e[0;35m'
+    CYAN='\e[0;36m'
+    NC='\e[0m' # No Color
+fi
 
 # Configuration
 HISTORY_FILE="$HOME/.terminal_ai_lite_history"
@@ -57,22 +71,40 @@ fi
 
 # Function to display banner
 show_banner() {
-    printf "${BLUE}╔══════════════════════════════════════════╗${NC}\n"
-    printf "${BLUE}║${GREEN} Terminal AI Assistant Lite                ${BLUE}║${NC}\n"
-    printf "${BLUE}║${YELLOW} Type 'exit' to quit, 'help' for commands ${BLUE}║${NC}\n"
-    printf "${BLUE}╚══════════════════════════════════════════╝${NC}\n"
+    if [ "$IS_WINDOWS" = true ]; then
+        echo "╔══════════════════════════════════════════╗"
+        echo "║ Terminal AI Assistant Lite                ║"
+        echo "║ Type 'exit' to quit, 'help' for commands ║"
+        echo "╚══════════════════════════════════════════╝"
+    else
+        printf "${BLUE}╔══════════════════════════════════════════╗${NC}\n"
+        printf "${BLUE}║${GREEN} Terminal AI Assistant Lite                ${BLUE}║${NC}\n"
+        printf "${BLUE}║${YELLOW} Type 'exit' to quit, 'help' for commands ${BLUE}║${NC}\n"
+        printf "${BLUE}╚══════════════════════════════════════════╝${NC}\n"
+    fi
 }
 
 # Function to show help
 show_help() {
-    printf "${CYAN}Available Commands:${NC}\n"
-    printf "  ${GREEN}help${NC}     - Show this help message\n"
-    printf "  ${GREEN}exit${NC}     - Exit the program\n"
-    printf "  ${GREEN}clear${NC}    - Clear the screen\n"
-    printf "  ${GREEN}history${NC}  - Show command history\n"
-    printf "  ${GREEN}config${NC}   - Show current configuration\n"
-    printf "  ${GREEN}cd DIR${NC}   - Change directory\n"
-    printf "  ${GREEN}pwd${NC}      - Show current directory\n"
+    if [ "$IS_WINDOWS" = true ]; then
+        echo "Available Commands:"
+        echo "  help     - Show this help message"
+        echo "  exit     - Exit the program"
+        echo "  clear    - Clear the screen"
+        echo "  history  - Show command history"
+        echo "  config   - Show current configuration"
+        echo "  cd DIR   - Change directory"
+        echo "  pwd      - Show current directory"
+    else
+        printf "${CYAN}Available Commands:${NC}\n"
+        printf "  ${GREEN}help${NC}     - Show this help message\n"
+        printf "  ${GREEN}exit${NC}     - Exit the program\n"
+        printf "  ${GREEN}clear${NC}    - Clear the screen\n"
+        printf "  ${GREEN}history${NC}  - Show command history\n"
+        printf "  ${GREEN}config${NC}   - Show current configuration\n"
+        printf "  ${GREEN}cd DIR${NC}   - Change directory\n"
+        printf "  ${GREEN}pwd${NC}      - Show current directory\n"
+    fi
 }
 
 # Function to check if a command is dangerous
@@ -102,7 +134,11 @@ get_ai_response() {
     Return only the commands, one per line, without any explanations or markdown formatting."
     
     # Call Gemini API - Fix color escape sequence
-    printf "${YELLOW}Thinking...${NC}\n"
+    if [ "$IS_WINDOWS" = true ]; then
+        echo "Thinking..."
+    else
+        printf "${YELLOW}Thinking...${NC}\n"
+    fi
     
     local response
     response=$(curl -s -X POST "https://generativelanguage.googleapis.com/v1beta/models/$MODEL:generateContent?key=$API_KEY" \
@@ -130,7 +166,11 @@ execute_command() {
     
     # Check if command is dangerous
     if $CONFIRM_DANGEROUS && is_dangerous_command "$command"; then
-        printf "${RED}Warning: This command might be dangerous.${NC}\n"
+        if [ "$IS_WINDOWS" = true ]; then
+            echo "Warning: This command might be dangerous."
+        else
+            printf "${RED}Warning: This command might be dangerous.${NC}\n"
+        fi
         echo -n "Continue? (y/n): "
         read -r confirm
         if [[ "$confirm" != "y" ]]; then
@@ -142,7 +182,12 @@ execute_command() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') $command" >> "$HISTORY_FILE"
     
     # Execute command
-    printf "${GREEN}Executing:${NC} $command\n"
+    if [ "$IS_WINDOWS" = true ]; then
+        echo "Executing: $command"
+    else
+        printf "${GREEN}Executing:${NC} $command\n"
+    fi
+    
     if $STREAM_OUTPUT; then
         eval "$command"
     else
@@ -161,7 +206,11 @@ process_builtin_command() {
             return 0
             ;;
         "exit" | "quit")
-            printf "${GREEN}Goodbye!${NC}\n"
+            if [ "$IS_WINDOWS" = true ]; then
+                echo "Goodbye!"
+            else
+                printf "${GREEN}Goodbye!${NC}\n"
+            fi
             exit 0
             ;;
         "clear")
@@ -178,7 +227,11 @@ process_builtin_command() {
             return 0
             ;;
         "config")
-            printf "${CYAN}Current Configuration:${NC}\n"
+            if [ "$IS_WINDOWS" = true ]; then
+                echo "Current Configuration:"
+            else
+                printf "${CYAN}Current Configuration:${NC}\n"
+            fi
             echo "MAX_HISTORY=$MAX_HISTORY"
             echo "CONFIRM_DANGEROUS=$CONFIRM_DANGEROUS"
             echo "STREAM_OUTPUT=$STREAM_OUTPUT"
@@ -208,7 +261,11 @@ main() {
     
     while true; do
         echo ""
-        printf "${GREEN}What would you like me to do?${NC} "
+        if [ "$IS_WINDOWS" = true ]; then
+            echo -n "What would you like me to do? "
+        else
+            printf "${GREEN}What would you like me to do?${NC} "
+        fi
         read -r user_input
         
         # Check if it's a built-in command
@@ -221,14 +278,22 @@ main() {
         
         # Execute each command
         if [ -n "$commands" ]; then
-            printf "${CYAN}I'll run these commands for you:${NC}\n"
+            if [ "$IS_WINDOWS" = true ]; then
+                echo "I'll run these commands for you:"
+            else
+                printf "${CYAN}I'll run these commands for you:${NC}\n"
+            fi
             echo "$commands" | while read -r command; do
                 if [ -n "$command" ]; then
                     execute_command "$command"
                 fi
             done
         else
-            printf "${RED}Sorry, I couldn't generate any commands for that request.${NC}\n"
+            if [ "$IS_WINDOWS" = true ]; then
+                echo "Sorry, I couldn't generate any commands for that request."
+            else
+                printf "${RED}Sorry, I couldn't generate any commands for that request.${NC}\n"
+            fi
         fi
     done
 }
