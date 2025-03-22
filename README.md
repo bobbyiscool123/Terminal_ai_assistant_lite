@@ -4,16 +4,16 @@ By this point in time, if you're aren't making your own AI assistant, what are y
 
 ## Features
 
-1. **Minimal Dependencies**: Requires only bash and curl (with optional jq for better JSON handling)
-2. **No Python Required**: Works without Python or pip installation
-3. **Linux Terminal Focus**: Optimized for Linux command-line environments
+1. **Cross-Platform**: Works on Windows, macOS, and Linux
+2. **Minimal Dependencies**: Only needs Python and a few standard libraries
+3. **Microsoft-themed Colors**: Beautiful color formatting for improved readability
 4. **Real-time Command Streaming**: See command output as it happens
 5. **Command History**: Tracks executed commands with timestamps
 6. **Dangerous Command Protection**: Built-in safety checks for risky commands
-7. **Simple Configuration**: Easy to customize via config file
-8. **Color-coded Interface**: Improved readability with color formatting
-9. **Persistent API Key Storage**: Securely saves your API key between sessions
-10. **Small Footprint**: Minimal disk space and memory usage
+7. **Simple Configuration**: Easy to customize via environment variables
+8. **Persistent API Key Storage**: Securely saves your API key in a .env file
+9. **Small Footprint**: Minimal disk space and memory usage
+10. **Smart Response Fallbacks**: Works even when API is unavailable
 
 ## How to Use
 
@@ -22,61 +22,54 @@ By this point in time, if you're aren't making your own AI assistant, what are y
 git clone https://github.com/bobbyiscool123/Terminal_ai_assistant_lite.git
 cd Terminal_ai_assistant_lite
 ```
-2. Run the installation script:
+
+2. Install the required dependencies:
 ```bash
-./install.sh
+pip install python-dotenv colorama
 ```
+
 3. Start the assistant:
 ```bash
-./terminal_ai_lite.sh
+python terminal_ai_lite.py
 ```
-4. On first run, you'll be prompted to enter your API key.
+
+4. On first run, you'll be prompted to enter your Gemini API key, which will be stored in the .env file.
 
 ## Dependencies
 
 ### Required
-- bash (present on virtually all Linux systems)
+- Python 3.6+
+- python-dotenv (for .env file support)
+- colorama (for cross-platform color support)
 - curl (for API communication)
 
-### Optional
-- jq (for better JSON handling)
+### Installation on different platforms
 
-To install the optional dependency on Debian/Ubuntu:
+#### Windows
 ```bash
-sudo apt-get install jq
+pip install python-dotenv colorama
+# curl is usually bundled with Git for Windows
 ```
 
-On Fedora/RHEL/CentOS:
+#### macOS
 ```bash
-sudo dnf install jq
+pip install python-dotenv colorama
+# curl is pre-installed
 ```
 
-## Customization
-
-1. Open the `terminal_ai_lite.config` file in your preferred text editor.
-2. Make any modifications you desire.
-
-The configuration file allows you to customize:
-
+#### Linux/Termux
 ```bash
-# Maximum number of history entries to show
-MAX_HISTORY=100
-
-# Whether to confirm dangerous commands
-CONFIRM_DANGEROUS=true
-
-# Whether to stream command output in real-time
-STREAM_OUTPUT=true
-
-# AI model to use
-MODEL="gemini-2.0-flash"
+pip install python-dotenv colorama
+# curl is usually pre-installed, if not:
+# apt-get install curl (Debian/Ubuntu)
+# pkg install curl (Termux)
 ```
 
 ## Usage
 
 Run the assistant:
 ```bash
-./terminal_ai_lite.sh
+python terminal_ai_lite.py
 ```
 
 Type your task in natural language. For example:
@@ -95,6 +88,15 @@ The AI will generate and execute the appropriate commands in sequence.
 - `config`: Show current configuration
 - `cd DIR`: Change directory
 - `pwd`: Show current directory
+- `api-key`: Update your API key
+
+## API Key Management
+
+You can update your API key in several ways:
+
+1. Use the built-in command: `api-key`
+2. Edit the `.env` file directly
+3. Delete the `.env` file to be prompted for a new key on next run
 
 ## Example Tasks
 
