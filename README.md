@@ -1,6 +1,6 @@
 # Terminal AI Assistant Lite
 
-A lightweight, bash-based terminal assistant that uses Google's Gemini AI to execute commands based on natural language descriptions. This version is specifically designed for Linux terminals with minimal dependencies.
+By this point in time, if you're aren't making your own AI assistant, what are you doing? Use this as a template to build on. All the code is just a suggestion. Use other AI models to build it for you. Just feed terminal_ai_lite into whatever LLM (AI) you want and build/modify this in sections. Happy Hacking.
 
 ## Features
 
@@ -15,24 +15,22 @@ A lightweight, bash-based terminal assistant that uses Google's Gemini AI to exe
 9. **Persistent API Key Storage**: Securely saves your API key between sessions
 10. **Small Footprint**: Minimal disk space and memory usage
 
-## Installation
+## How to Use
 
-1. Download the script:
+1. Clone the repository to your local machine.
 ```bash
-curl -o terminal_ai_lite.sh https://raw.githubusercontent.com/yourusername/Terminal_ai_assistant_lite/main/terminal_ai_lite.sh
+git clone https://github.com/bobbyiscool123/Terminal_ai_assistant_lite.git
+cd Terminal_ai_assistant_lite
 ```
-
-2. Make it executable:
+2. Run the installation script:
 ```bash
-chmod +x terminal_ai_lite.sh
+./install.sh
 ```
-
-3. Run the script:
+3. Start the assistant:
 ```bash
 ./terminal_ai_lite.sh
 ```
-
-4. On first run, you'll be prompted to enter your Google Gemini API key.
+4. On first run, you'll be prompted to enter your API key.
 
 ## Dependencies
 
@@ -53,39 +51,12 @@ On Fedora/RHEL/CentOS:
 sudo dnf install jq
 ```
 
-## Usage
+## Customization
 
-1. Run the script:
-```bash
-./terminal_ai_lite.sh
-```
+1. Open the `terminal_ai_lite.config` file in your preferred text editor.
+2. Make any modifications you desire.
 
-2. Type your task in natural language. For example:
-```
-What would you like me to do? Find all jpg files in the current directory and resize them to 800x600
-```
-
-3. The AI will generate and execute the appropriate commands in sequence.
-
-## Available Commands
-
-- `help`: Show help information
-- `exit` or `quit`: Exit the program
-- `clear`: Clear the screen
-- `history`: Show command history
-- `config`: Show current configuration
-- `cd DIR`: Change directory
-- `pwd`: Show current directory
-
-## Configuration
-
-The script creates these configuration files:
-
-- `~/.terminal_ai_lite_config`: Configuration settings
-- `~/.terminal_ai_lite_api_key`: Stores your API key
-- `~/.terminal_ai_lite_history`: Command history
-
-You can edit `~/.terminal_ai_lite_config` to customize:
+The configuration file allows you to customize:
 
 ```bash
 # Maximum number of history entries to show
@@ -101,11 +72,29 @@ STREAM_OUTPUT=true
 MODEL="gemini-2.0-flash"
 ```
 
-## Safety Features
+## Usage
 
-- Built-in protection against dangerous commands
-- Command confirmation for potentially harmful operations
-- Secure API key storage with proper permissions
+Run the assistant:
+```bash
+./terminal_ai_lite.sh
+```
+
+Type your task in natural language. For example:
+```
+What would you like me to do? Find all jpg files in the current directory and resize them to 800x600
+```
+
+The AI will generate and execute the appropriate commands in sequence.
+
+## Available Commands
+
+- `help`: Show help information
+- `exit` or `quit`: Exit the program
+- `clear`: Clear the screen
+- `history`: Show command history
+- `config`: Show current configuration
+- `cd DIR`: Change directory
+- `pwd`: Show current directory
 
 ## Example Tasks
 
@@ -117,15 +106,14 @@ Try these examples:
 4. "Find the largest 10 files in my home directory"
 5. "Create a compressed backup of my Documents folder"
 
+## Disclaimer
+
+Terminal AI Assistant Lite is a personal A.I. assistant and is not intended to replace human interaction or professional advice. Use it at your own risk.
+
 ## License
 
-This project is licensed under the MIT License.
+This project is licensed under the GPL-3.0 License.
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## Acknowledgments
-
-- This is the lite version of the full Terminal AI Assistant project
-- Thanks to Google for providing the Gemini API 
+Contributions are welcome! Please feel free to submit a Pull Request to our [GitHub repository](https://github.com/bobbyiscool123/Terminal_ai_assistant_lite). 
