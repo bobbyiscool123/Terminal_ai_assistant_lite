@@ -1,0 +1,26 @@
+# API Keys and Secrets
+.env
+.terminal_ai_lite_api_key
+*api_key*
+
+# History files
+.terminal_ai_lite_history
+*history.json
+*_history
+
+# User configuration
+.terminal_ai_lite_config
+
+# Log files
+*.log
+
+# OS specific files
+.DS_Store
+Thumbs.db
+*~
+.*.swp
+.*.swo
+
+# Backup files
+*.bak
+*.backup 
