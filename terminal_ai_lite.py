@@ -1315,26 +1315,23 @@ def get_user_input_with_history():
     """Get user input with history navigation support"""
     global HISTORY_FILE
     
+    # For Windows PowerShell, use a simpler prompt
+    if os.name == "nt":
+        return input("> ")
+    
     # If prompt_toolkit is available, use it for enhanced history
     if PROMPT_TOOLKIT_AVAILABLE:
         try:
             # Create a session with history from file
             session = PromptSession(history=FileHistory(HISTORY_FILE))
-            # Prompt with colored prompt
-            return session.prompt(f"{MS_CYAN}> {MS_RESET}")
+            # Use a simple prompt for better compatibility
+            return session.prompt("> ")
         except Exception as e:
             # Fallback on error
             print(f"{MS_YELLOW}Error using prompt_toolkit: {e}. Falling back to basic input.{MS_RESET}")
     
-    # For Windows PowerShell, use a simpler prompt
-    if os.name == "nt":
-        return input("> ")
-    
-    # For other systems, try colored prompt
-    try:
-        return input(f"{MS_CYAN}> {MS_RESET}")
-    except Exception:
-        return input("> ")
+    # For other systems, use basic input
+    return input("> ")
 
 def execute_command_chain(command_chain):
     """Execute a chain of commands connected by && or ||"""
