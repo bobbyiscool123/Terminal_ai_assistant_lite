@@ -1326,8 +1326,12 @@ def get_user_input_with_history():
             # Fallback on error
             print(f"{MS_YELLOW}Error using prompt_toolkit: {e}. Falling back to basic input.{MS_RESET}")
     
-    # Otherwise, use basic input
-    return input(f"{MS_CYAN}> {MS_RESET}")
+    # Otherwise, use basic input with colorama for Windows compatibility
+    try:
+        return input(f"{MS_CYAN}> {MS_RESET}")
+    except Exception:
+        # If colorama fails, fall back to plain prompt
+        return input("> ")
 
 def execute_command_chain(command_chain):
     """Execute a chain of commands connected by && or ||"""
