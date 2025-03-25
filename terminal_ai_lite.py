@@ -94,7 +94,7 @@ templates = {
 command_groups = {
     "file": ["ls", "cd", "cp", "mv", "rm", "mkdir", "touch", "cat", "nano", "find"],
     "network": ["ifconfig", "ping", "traceroute", "netstat", "ssh", "curl", "wget"],
-    "system": ["top", "ps", "kill", "systemctl", "df", "du", "free"],
+    "system": ["top", "ps", "kill", "termux-info", "df", "du", "free"],
     "package": ["pkg", "apt", "dpkg", "pip"],
     "archive": ["tar", "zip", "unzip", "gzip", "gunzip"],
     "git": ["git clone", "git pull", "git push", "git commit", "git status"]
@@ -1035,6 +1035,15 @@ def get_ai_response(task):
     if "pkg update" in task.lower() or "upgrade" in task.lower():
         return "pkg update\npkg upgrade -y"
     
+    # System information commands
+    if "system information" in task.lower() or "system info" in task.lower():
+        return """termux-info
+df -h
+free -h
+top -n 1
+ifconfig
+ps aux"""
+    
     # Check token cache
     if USE_TOKEN_CACHE and task in token_cache:
         commands, timestamp = token_cache[task]
@@ -1072,7 +1081,10 @@ def call_ai_api(task):
     Task: {task}
     Current directory: {current_dir}
     Return only the commands, one per line, without any explanations or markdown formatting.
-    Use Termux-specific commands where appropriate (e.g., pkg instead of apt)."""
+    Use Termux-specific commands where appropriate (e.g., pkg instead of apt, termux-info for system info).
+    For system information, use: termux-info, df -h, free -h, top -n 1, ifconfig, ps aux
+    For package management, use: pkg update, pkg upgrade, pkg install, pkg remove
+    For file operations, use standard Unix commands: ls, cd, cp, mv, rm, etc."""
     
     print(f"{MS_YELLOW}Thinking...{MS_RESET}", file=sys.stderr)
     
