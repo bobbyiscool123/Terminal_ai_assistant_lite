@@ -594,8 +594,11 @@ def execute_command(command, is_async=False):
             return
     
     # Verify command if enabled
-    if VERIFY_COMMANDS and not verify_command(command):
-        return
+    if VERIFY_COMMANDS:
+        safe, message = verify_command(command)
+        if not safe:
+            print(f"{MS_RED}Command verification failed: {message}{MS_RESET}")
+            return
     
     # Explain command if enabled
     if EXPLAIN_COMMANDS:
@@ -1156,7 +1159,7 @@ def run_setup_wizard():
     new_version = input(f"Enter API version [{API_VERSION}]: ")
     if new_version.strip():
         API_VERSION = new_version
-        
+    
     # Model selection
     print(f"\n{MS_CYAN}Select AI model:{MS_RESET}")
     print(f"1. gemini-1.5-flash (faster)")
@@ -1215,20 +1218,27 @@ def get_ai_response(task):
     """Call Gemini API to get command suggestions"""
     global API_KEY, USE_STREAMING_API
     
+    # For Termux and environments without the Google library, always use curl
     if not GENAI_AVAILABLE:
-        print(f"{MS_YELLOW}Google Generative AI library not available. Install with: pip install google-generativeai{MS_RESET}")
-        print(f"{MS_YELLOW}Falling back to curl-based API calls.{MS_RESET}")
-        # Fall back to curl-based methods
         if USE_STREAMING_API:
             commands = stream_ai_response_curl(task)
         else:
             commands = call_ai_api_curl(task)
     else:
-        # Use the Python library
-        if USE_STREAMING_API:
-            commands = stream_ai_response(task)
-        else:
-            commands = call_ai_api(task)
+        # Use the Python library when available
+        try:
+            if USE_STREAMING_API:
+                commands = stream_ai_response(task)
+            else:
+                commands = call_ai_api(task)
+        except Exception as e:
+            print(f"{MS_YELLOW}Error using Google library: {e}{MS_RESET}", file=sys.stderr)
+            print(f"{MS_YELLOW}Falling back to curl-based API calls.{MS_RESET}", file=sys.stderr)
+            # Fall back to curl-based methods
+            if USE_STREAMING_API:
+                commands = stream_ai_response_curl(task)
+            else:
+                commands = call_ai_api_curl(task)
     
     return commands
 
@@ -1784,11 +1794,13 @@ def execute_command_chain(command_chain):
         
         # Handle && and || operators, but only when not in quotes
         elif not in_quotes and i < len(command_chain) - 1:
+            # Check for AND operator
             if char == "&" and command_chain[i+1] == "&":
                 if current_command.strip():
                     commands.append((current_command.strip(), "AND"))
                 current_command = ""
                 i += 1  # Skip the next &
+            # Check for OR operator
             elif char == "|" and command_chain[i+1] == "|":
                 if current_command.strip():
                     commands.append((current_command.strip(), "OR"))
