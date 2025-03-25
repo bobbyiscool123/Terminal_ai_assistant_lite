@@ -304,10 +304,10 @@ def ensure_history_file():
 
 def show_banner():
     """Display the terminal assistant banner"""
-    print(f"{MS_BLUE}╔══════════════════════════════════════════╗{MS_RESET}")
-    print(f"{MS_BLUE}║{MS_CYAN} Terminal AI Assistant Lite                {MS_BLUE}║{MS_RESET}")
-    print(f"{MS_BLUE}║{MS_YELLOW} Type 'exit' to quit, 'help' for commands {MS_BLUE}║{MS_RESET}")
-    print(f"{MS_BLUE}╚══════════════════════════════════════════╝{MS_RESET}")
+    print(f"{MS_BLUE}+==========================================+{MS_RESET}")
+    print(f"{MS_BLUE}|{MS_CYAN} Terminal AI Assistant Lite                {MS_BLUE}|{MS_RESET}")
+    print(f"{MS_BLUE}|{MS_YELLOW} Type 'exit' to quit, 'help' for commands {MS_BLUE}|{MS_RESET}")
+    print(f"{MS_BLUE}+==========================================+{MS_RESET}")
 
 def show_help():
     """Display help information"""
