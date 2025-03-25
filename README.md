@@ -14,7 +14,7 @@ By this point in time, if you're aren't making your own AI assistant, what are y
 8. **Persistent API Key Storage**: Securely saves your API key in a .env file
 9. **Small Footprint**: Minimal disk space and memory usage
 10. **Smart Response Fallbacks**: Works even when API is unavailable
-11. **Google Generative AI Integration**: Uses the official Google Generative AI Python library when available
+11. **cURL-based API Integration**: Uses cURL for direct API communication
 12. **Termux Support**: Works on mobile devices via Termux
 
 ## How to Use
@@ -43,10 +43,10 @@ python terminal_ai_lite.py
 - Python 3.6+
 - python-dotenv (for .env file support)
 - colorama (for cross-platform color support)
-- curl (for API communication when fallback is needed)
+- curl (for API communication)
+- requests (for HTTP requests)
 
 ### Optional
-- google-generativeai (for improved API interaction)
 - prompt_toolkit (for enhanced command history)
 - pyperclip (for clipboard integration)
 
