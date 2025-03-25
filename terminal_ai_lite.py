@@ -97,7 +97,8 @@ command_groups = {
     "system": ["top", "ps", "kill", "termux-info", "df", "du", "free"],
     "package": ["pkg", "apt", "dpkg", "pip"],
     "archive": ["tar", "zip", "unzip", "gzip", "gunzip"],
-    "git": ["git clone", "git pull", "git push", "git commit", "git status"]
+    "git": ["git clone", "git pull", "git push", "git commit", "git status"],
+    "termux": ["termux-open", "termux-open-url", "termux-share", "termux-notification"]
 }
 
 # Output formatters
@@ -1026,23 +1027,6 @@ def run_setup_wizard():
 def get_ai_response(task):
     """Call Gemini API to get command suggestions"""
     global API_KEY, USE_STREAMING_API, USE_TOKEN_CACHE, token_cache
-    
-    # Simple responses for basic commands
-    if task.lower() in ["hi", "hello", "test"]:
-        return 'echo "Hello from Terminal AI Assistant! I\'m working correctly."'
-    
-    # Package update commands
-    if "pkg update" in task.lower() or "upgrade" in task.lower():
-        return "pkg update\npkg upgrade -y"
-    
-    # System information commands
-    if "system information" in task.lower() or "system info" in task.lower():
-        return """termux-info
-df -h
-free -h
-top -n 1
-ifconfig
-ps aux"""
     
     # Check token cache
     if USE_TOKEN_CACHE and task in token_cache:
