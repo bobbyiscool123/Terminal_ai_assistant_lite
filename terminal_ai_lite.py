@@ -11,6 +11,7 @@ import pickle
 import shlex
 import asyncio
 import threading
+import select
 from pathlib import Path
 from dotenv import load_dotenv
 from colorama import init, Fore, Back, Style, AnsiToWin32
@@ -394,7 +395,7 @@ def explain_command(command):
 
 def verify_command(command):
     """Verify a command by getting an explanation and confirmation"""
-    global API_KEY, VERIFY_COMMANDS
+    global API_KEY, VERIFY_COMMANDS, MODEL
     
     if not VERIFY_COMMANDS:
         return True
@@ -402,15 +403,18 @@ def verify_command(command):
     print(f"{MS_YELLOW}Verifying command: {command}{MS_RESET}")
     
     # Check if it's a simple and safe command
-    simple_commands = ["ls", "pwd", "echo", "cat", "cd", "clear"]
+    simple_commands = ["ls", "pwd", "echo", "cat", "cd", "clear", "whoami", "date", "time", "help"]
     for cmd in simple_commands:
-        if command.startswith(cmd + " ") or command == cmd:
-            return True
+        if command == cmd or command.startswith(cmd + " "):
+            if not any(dangerous in command for dangerous in ["$(", "`", "&", "|", ";", ">", "<"]):
+                return True
     
-    # Get verification from AI
+    # Get verification from AI using current model
     try:
-        prompt = f"""Analyze this terminal command and explain what it does and if it's safe:
-        {command}
+        prompt = f"""Analyze this terminal command and evaluate its safety:
+
+        COMMAND: {command}
+        OPERATING SYSTEM: {"Windows" if os.name == "nt" else "Unix/Linux"}
         
         Format your response as:
         WHAT IT DOES: [brief explanation]
@@ -421,43 +425,121 @@ def verify_command(command):
         
         curl_command = [
             "curl", "-s", "-X", "POST",
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={API_KEY}",
+            f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent?key={API_KEY}",
             "-H", "Content-Type: application/json",
             "-d", json.dumps({
                 "contents": [{
                     "parts": [{
                         "text": prompt
                     }]
-                }]
+                }],
+                "generationConfig": {
+                    "temperature": 0.1,
+                    "maxOutputTokens": 512
+                }
             })
         ]
         
-        result = subprocess.run(curl_command, capture_output=True, text=True)
+        # Call API with timeout
+        result = subprocess.run(curl_command, capture_output=True, text=True, timeout=15)
         response = result.stdout
         
-        response_data = json.loads(response)
-        verification = response_data["candidates"][0]["content"]["parts"][0]["text"]
+        if not response or "error" in response:
+            print(f"{MS_RED}Error getting command verification. Proceed with caution.{MS_RESET}")
+            confirm = input(f"{MS_YELLOW}Execute anyway? (y/n):{MS_RESET} ")
+            return confirm.lower() == 'y'
         
-        print(f"{MS_CYAN}Command Verification:{MS_RESET}")
-        print(f"{verification.strip()}")
+        try:
+            response_data = json.loads(response)
+            verification = response_data["candidates"][0]["content"]["parts"][0]["text"]
+            
+            print(f"{MS_CYAN}Command Verification:{MS_RESET}")
+            print(f"{verification.strip()}")
+            
+            # Extract the safety assessment
+            safety_line = ""
+            for line in verification.splitlines():
+                if line.strip().startswith("SAFETY:"):
+                    safety_line = line.strip().lower()
+                    break
+            
+            # Highlight safety concerns with color
+            if "unsafe" in safety_line or "dangerous" in safety_line:
+                print(f"{MS_RED}This command may be unsafe. Please review carefully.{MS_RESET}")
+            elif "safe" in safety_line:
+                print(f"{MS_GREEN}Command appears to be safe.{MS_RESET}")
+            else:
+                print(f"{MS_YELLOW}Safety assessment unclear. Please review manually.{MS_RESET}")
+            
+            confirm = input(f"{MS_YELLOW}Execute this command? (y/n):{MS_RESET} ")
+            return confirm.lower() == 'y'
+        except Exception as e:
+            print(f"{MS_RED}Error parsing verification: {e}{MS_RESET}")
+            confirm = input(f"{MS_YELLOW}Execute anyway? (y/n):{MS_RESET} ")
+            return confirm.lower() == 'y'
         
-        confirm = input(f"{MS_YELLOW}Execute this command? (y/n):{MS_RESET} ")
+    except subprocess.TimeoutExpired:
+        print(f"{MS_RED}Verification request timed out. Proceed with caution.{MS_RESET}")
+        confirm = input(f"{MS_YELLOW}Execute anyway? (y/n):{MS_RESET} ")
         return confirm.lower() == 'y'
-        
     except Exception as e:
         print(f"{MS_RED}Verification error: {e}. Proceed with caution.{MS_RESET}")
         confirm = input(f"{MS_YELLOW}Execute anyway? (y/n):{MS_RESET} ")
         return confirm.lower() == 'y'
 
 def is_dangerous_command(command):
-    """Check if a command is potentially dangerous"""
-    dangerous_patterns = ["rm -rf", "mkfs", "dd", "chmod", "chown", "sudo", 
-                         "> /dev/sda", "mkfs.ext4", "dd if=", "rm -rf /",
-                         ":(){:|:&};:", "> /dev/null", "mv /* /dev/null"]
+    """Check if a command is potentially dangerous using regex patterns"""
+    import re
+    
+    # Normalized command (lowercase, extra spaces removed)
+    normalized_cmd = re.sub(r'\s+', ' ', command.lower().strip())
+    
+    # Regex patterns for dangerous commands
+    dangerous_patterns = [
+        # System modification commands
+        r'rm\s+(-[a-z]*[rf][a-z]*\s+|-[a-z]*\s+)?(/|\.|~)',  # rm with r or f flags targeting root/home
+        r'mv\s+(/|\.|~).*\s+/dev',  # Moving critical files to /dev
+        r'mkfs',  # Filesystem formatting
+        r'dd(\s+|=)',  # Low-level disk operations
+        r'chmod\s+([0-7])?[0-7][0-7][0-7]\s+(/|\.|~|/etc|/var|/usr)',  # chmod on system directories
+        r'chown\s+.*\s+(/|\.|~|/etc|/var|/usr)',  # chown on system directories
+        
+        # Privilege escalation
+        r'sudo',  # Sudo command
+        r'su\s',  # Switch user
+        
+        # Dangerous redirections
+        r'>\s*/dev/sd[a-z]',  # Writing to disk devices
+        r'>\s*/dev/null.*<',  # Null redirection with input
+        
+        # Fork bombs and dangerous bash constructs
+        r':\(\)\s*{.*}.*:',  # Fork bomb pattern
+        r'\(\s*[a-zA-Z]+.*\)\s*{\s*.*\s*}\s*;',  # Suspicious bash function declarations
+        
+        # Command execution in subshells
+        r'\$\(.*\)',  # Command substitution
+        r'`.*`',      # Backtick command substitution
+        
+        # Network and remote access
+        r'nc\s+-[el]',  # Netcat in listening mode
+        r'curl\s+.*\|\s*sh',  # Piping curl to shell
+        r'wget\s+.*\|\s*sh',  # Piping wget to shell
+        
+        # Sensitive paths
+        r'(rm|mv|cp)\s+-[a-z]*\s+.*(/etc/passwd|/etc/shadow|/etc/sudoers)',  # Modifying critical system files
+        r'(rm|mv|cp)\s+-[a-z]*\s+.*/boot',  # Modifying boot files
+    ]
     
     for pattern in dangerous_patterns:
-        if pattern in command:
+        if re.search(pattern, normalized_cmd):
             return True
+    
+    # Check for sensitive directories that should not be removed or modified
+    sensitive_dirs = ["/", "/etc", "/var", "/usr", "/bin", "/sbin", "/lib", "/boot", "/dev", "/proc", "/sys"]
+    for directory in sensitive_dirs:
+        if f"rm -rf {directory}" in normalized_cmd or f"rm -fr {directory}" in normalized_cmd:
+            return True
+            
     return False
 
 # Store last command output for formatting/copying
@@ -467,10 +549,22 @@ def execute_command(command, is_async=False):
     """Execute a shell command with appropriate safeguards"""
     global CONFIRM_DANGEROUS, STREAM_OUTPUT, EXPLAIN_COMMANDS, VERIFY_COMMANDS, FORMAT_OUTPUT, last_command_output
     
+    # Skip empty commands
+    if not command or command.isspace():
+        print(f"{MS_YELLOW}Empty command. Nothing to execute.{MS_RESET}")
+        return
+    
     # Handle async execution
     if is_async or command.startswith("&"):
         if command.startswith("&"):
             command = command[1:].strip()
+        
+        # Apply security checks before running in background
+        if CONFIRM_DANGEROUS and is_dangerous_command(command):
+            print(f"{MS_RED}Warning: This command might be dangerous.{MS_RESET}")
+            confirm = input("Continue in background? (y/n): ")
+            if confirm.lower() != "y":
+                return
         
         job_id = start_async_command(command)
         print(f"{MS_GREEN}Started background job #{job_id}{MS_RESET}")
@@ -479,6 +573,7 @@ def execute_command(command, is_async=False):
     # Check if command is dangerous
     if CONFIRM_DANGEROUS and is_dangerous_command(command):
         print(f"{MS_RED}Warning: This command might be dangerous.{MS_RESET}")
+        print(f"{MS_RED}Command: {command}{MS_RESET}")
         confirm = input("Continue? (y/n): ")
         if confirm.lower() != "y":
             return
@@ -496,50 +591,119 @@ def execute_command(command, is_async=False):
     
     # Parse command for potential pipes to formatters
     formatted_output = False
+    base_command = command
+    
     if " | format:" in command:
-        base_command, formatter = command.split(" | format:", 1)
-        formatter = formatter.strip()
+        parts = command.split(" | format:", 1)
+        base_command = parts[0]
+        formatter = parts[1].strip()
         formatted_output = True
-    else:
-        base_command = command
     
     # Add to history
-    with open(HISTORY_FILE, "a") as f:
-        timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        f.write(f"{timestamp} {command}\n")
+    try:
+        with open(HISTORY_FILE, "a") as f:
+            timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            f.write(f"{timestamp} {command}\n")
+    except Exception as e:
+        print(f"{MS_YELLOW}Could not write to history file: {e}{MS_RESET}")
     
-    # Execute command
+    # Execute command with timeout handling
     print(f"{MS_GREEN}Executing:{MS_RESET} {base_command}")
     
     try:
         if STREAM_OUTPUT and not formatted_output:
-            # Stream output in real-time
-            process = subprocess.Popen(base_command, shell=True, executable="/bin/bash" if os.name != "nt" else None)
-            process.communicate()
-            last_command_output = "Output was streamed and not captured"
-        else:
-            # Capture and display output
-            result = subprocess.run(base_command, shell=True, capture_output=True, text=True)
-            output = result.stdout
-            error = result.stderr
-            
-            # Store output for later formatting or copying
-            last_command_output = output
-            
-            # Format output if requested
-            if formatted_output:
-                output = format_output(output, formatter)
-            
-            if output:
-                print(output)
-            if error:
-                print(f"{MS_RED}{error}{MS_RESET}")
+            # Stream output in real-time with timeout
+            try:
+                # Create process
+                process = subprocess.Popen(
+                    base_command, 
+                    shell=True, 
+                    executable="/bin/bash" if os.name != "nt" else None,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    bufsize=1
+                )
                 
-            # Automatically copy to clipboard if enabled and a copy formatter was used
-            if " | copy" in command and USE_CLIPBOARD:
-                copy_to_clipboard(output)
+                # Set timeout
+                start_time = time.time()
+                max_execution_time = 300  # 5 minutes
+                
+                # Stream output with timeout check
+                while process.poll() is None:
+                    # Check for timeout
+                    if time.time() - start_time > max_execution_time:
+                        process.terminate()
+                        print(f"\n{MS_RED}Command execution timed out after {max_execution_time} seconds{MS_RESET}")
+                        return
+                    
+                    # Read stdout with timeout
+                    ready_to_read, _, _ = select.select([process.stdout, process.stderr], [], [], 0.1)
+                    for stream in ready_to_read:
+                        line = stream.readline()
+                        if line:
+                            if stream == process.stdout:
+                                print(line, end="")
+                            else:
+                                print(f"{MS_RED}{line}{MS_RESET}", end="")
+                
+                # Read any remaining output
+                stdout, stderr = process.communicate()
+                if stdout:
+                    print(stdout, end="")
+                if stderr:
+                    print(f"{MS_RED}{stderr}{MS_RESET}", end="")
+                
+                last_command_output = "Output was streamed and not captured"
+                
+                # Check return code
+                if process.returncode != 0:
+                    print(f"\n{MS_YELLOW}Command completed with return code: {process.returncode}{MS_RESET}")
+                
+            except Exception as e:
+                print(f"{MS_RED}Error streaming command output: {e}{MS_RESET}")
+                
+        else:
+            # Capture and display output with timeout
+            try:
+                result = subprocess.run(
+                    base_command, 
+                    shell=True, 
+                    capture_output=True, 
+                    text=True, 
+                    timeout=300  # 5 minute timeout
+                )
+                
+                output = result.stdout
+                error = result.stderr
+                
+                # Store output for later formatting or copying
+                last_command_output = output
+                
+                # Format output if requested
+                if formatted_output:
+                    output = format_output(output, formatter)
+                
+                if output:
+                    print(output)
+                if error:
+                    print(f"{MS_RED}{error}{MS_RESET}")
+                
+                # Display return code if non-zero
+                if result.returncode != 0:
+                    print(f"{MS_YELLOW}Command completed with return code: {result.returncode}{MS_RESET}")
+                    
+                # Automatically copy to clipboard if enabled and a copy formatter was used
+                if " | copy" in command and USE_CLIPBOARD:
+                    copy_to_clipboard(output)
+                    
+            except subprocess.TimeoutExpired:
+                print(f"{MS_RED}Command execution timed out after 5 minutes{MS_RESET}")
+            except Exception as e:
+                print(f"{MS_RED}Error executing command: {e}{MS_RESET}")
+                
     except Exception as e:
-        print(f"{MS_RED}Error executing command: {e}{MS_RESET}")
+        print(f"{MS_RED}Error setting up command execution: {e}{MS_RESET}")
 
 def format_last_output():
     """Format the last command output"""
@@ -1026,47 +1190,38 @@ def run_setup_wizard():
 
 def get_ai_response(task):
     """Call Gemini API to get command suggestions"""
-    global API_KEY, USE_STREAMING_API, USE_TOKEN_CACHE, token_cache
+    global API_KEY, USE_STREAMING_API
     
-    # Check token cache
-    if USE_TOKEN_CACHE and task in token_cache:
-        commands, timestamp = token_cache[task]
-        # Check if token is still valid (not expired)
-        if time.time() - timestamp <= TOKEN_CACHE_EXPIRY * 86400:  # seconds in a day
-            print(f"{MS_CYAN}Using cached response...{MS_RESET}")
-            return commands
-    
-    # If not in cache or streaming is enabled, call the API
+    # Always call the API for every request
     if USE_STREAMING_API:
         commands = stream_ai_response(task)
     else:
         commands = call_ai_api(task)
     
-    # Cache the result if valid
-    if USE_TOKEN_CACHE and commands:
-        token_cache[task] = (commands, time.time())
-        save_token_cache()
-    
     return commands
 
 def call_ai_api(task):
     """Non-streaming API call to Gemini"""
-    global API_KEY
+    global API_KEY, MODEL
     
     if not API_KEY:
         print(f"{MS_RED}API key not found in .env file. Please set GEMINI_API_KEY in your .env file.{MS_RESET}")
         return ""
     
     current_dir = os.getcwd()
+    os_type = "Windows" if os.name == "nt" else "Unix/Linux"
     
-    # Prepare the prompt
-    prompt = f"""You are a terminal command expert. Given the following task, provide a list of commands to execute in sequence.
-    Each command should be a single line and should be executable in the current environment.
-    Task: {task}
-    Current directory: {current_dir}
-    Return only the commands, one per line, without any explanations or markdown formatting.
-    Do not include any text before or after the commands.
-    Each command should be complete and executable as-is."""
+    # Prepare the prompt with OS-specific context
+    prompt = f"""You are a terminal command expert. Generate executable commands for the following task.
+    
+    TASK: {task}
+    CURRENT DIRECTORY: {current_dir}
+    OPERATING SYSTEM: {os_type}
+    
+    Respond ONLY with the exact commands to execute, one per line.
+    Do not include explanations, markdown formatting, or any text that is not meant to be executed.
+    Ensure each command is complete and executable as-is.
+    If the request cannot be satisfied with a command, respond with a single line explaining why."""
     
     print(f"{MS_YELLOW}Thinking...{MS_RESET}", file=sys.stderr)
     
@@ -1083,64 +1238,99 @@ def call_ai_api(task):
                     }]
                 }],
                 "generationConfig": {
-                    "temperature": 0.1,
+                    "temperature": 0.2,
                     "topP": 0.8,
-                    "topK": 40
+                    "topK": 40,
+                    "maxOutputTokens": 1024
                 }
             })
         ]
         
-        # Call API
-        result = subprocess.run(curl_command, capture_output=True, text=True)
+        # Call API with timeout
+        result = subprocess.run(curl_command, capture_output=True, text=True, timeout=30)
         response = result.stdout
         
         # Check for errors
+        if not response or response.isspace():
+            print(f"{MS_RED}Empty response from API. Check your internet connection.{MS_RESET}", file=sys.stderr)
+            return ""
+            
         if "error" in response:
             try:
                 error_data = json.loads(response)
                 error_message = error_data.get("error", {}).get("message", "Unknown error")
                 print(f"{MS_RED}API Error: {error_message}{MS_RESET}", file=sys.stderr)
-            except:
-                print(f"{MS_RED}API Error. Check your API key and internet connection.{MS_RESET}", file=sys.stderr)
-            return ""
-        
-        if not response:
-            print(f"{MS_RED}Empty response from API. Check your internet connection.{MS_RESET}", file=sys.stderr)
+            except json.JSONDecodeError:
+                print(f"{MS_RED}API Error. Unable to parse error response.{MS_RESET}", file=sys.stderr)
+            except Exception as e:
+                print(f"{MS_RED}API Error: {str(e)}{MS_RESET}", file=sys.stderr)
             return ""
         
         # Parse response
         try:
             response_data = json.loads(response)
-            commands = response_data["candidates"][0]["content"]["parts"][0]["text"]
-            # Clean up the response to ensure only commands are returned
+            
+            # Check if we have candidates
+            if not response_data.get("candidates", []):
+                print(f"{MS_RED}No candidates in API response.{MS_RESET}", file=sys.stderr)
+                return ""
+                
+            # Check for content
+            candidate = response_data["candidates"][0]
+            if not candidate.get("content", {}).get("parts", []):
+                print(f"{MS_RED}No content parts in API response.{MS_RESET}", file=sys.stderr)
+                return ""
+                
+            # Extract text
+            commands = candidate["content"]["parts"][0].get("text", "")
+            
+            # Clean up the response
             commands = "\n".join(line.strip() for line in commands.splitlines() if line.strip())
+            
+            if not commands:
+                print(f"{MS_YELLOW}API returned empty command set.{MS_RESET}", file=sys.stderr)
+                
             return commands
-        except (json.JSONDecodeError, KeyError, IndexError) as e:
+            
+        except json.JSONDecodeError:
+            print(f"{MS_RED}Failed to parse API response as JSON.{MS_RESET}", file=sys.stderr)
+            return ""
+        except KeyError as e:
+            print(f"{MS_RED}Missing expected field in API response: {e}{MS_RESET}", file=sys.stderr)
+            return ""
+        except Exception as e:
             print(f"{MS_RED}Failed to extract commands from API response: {e}{MS_RESET}", file=sys.stderr)
             return ""
             
+    except subprocess.TimeoutExpired:
+        print(f"{MS_RED}API request timed out. Please try again.{MS_RESET}", file=sys.stderr)
+        return ""
     except Exception as e:
         print(f"{MS_RED}Error calling API: {e}{MS_RESET}", file=sys.stderr)
         return ""
 
 def stream_ai_response(task):
     """Streaming API call to Gemini"""
-    global API_KEY
+    global API_KEY, MODEL
     
     if not API_KEY:
         print(f"{MS_RED}API key not found in .env file. Please set GEMINI_API_KEY in your .env file.{MS_RESET}")
         return ""
     
     current_dir = os.getcwd()
+    os_type = "Windows" if os.name == "nt" else "Unix/Linux"
     
-    # Prepare the prompt
-    prompt = f"""You are a terminal command expert. Given the following task, provide a list of commands to execute in sequence.
-    Each command should be a single line and should be executable in the current environment.
-    Task: {task}
-    Current directory: {current_dir}
-    Return only the commands, one per line, without any explanations or markdown formatting.
-    Do not include any text before or after the commands.
-    Each command should be complete and executable as-is."""
+    # Prepare the prompt with OS-specific context
+    prompt = f"""You are a terminal command expert. Generate executable commands for the following task.
+    
+    TASK: {task}
+    CURRENT DIRECTORY: {current_dir}
+    OPERATING SYSTEM: {os_type}
+    
+    Respond ONLY with the exact commands to execute, one per line.
+    Do not include explanations, markdown formatting, or any text that is not meant to be executed.
+    Ensure each command is complete and executable as-is.
+    If the request cannot be satisfied with a command, respond with a single line explaining why."""
     
     print(f"{MS_YELLOW}Thinking...{MS_RESET}", file=sys.stderr)
     
@@ -1157,29 +1347,50 @@ def stream_ai_response(task):
                     }]
                 }],
                 "generationConfig": {
-                    "temperature": 0.1,
+                    "temperature": 0.2,
                     "topP": 0.8,
-                    "topK": 40
+                    "topK": 40,
+                    "maxOutputTokens": 1024
                 }
             })
         ]
         
-        # Start process
+        # Start process with timeout management
         process = subprocess.Popen(curl_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         
-        # Collect all response chunks
-        all_commands = []
+        # Collect all response text
+        all_text = ""
         print(f"{MS_CYAN}Commands (streaming):{MS_RESET}", file=sys.stderr)
         
+        # Set a timeout for the entire streaming process
+        start_time = time.time()
+        timeout = 60  # 60 seconds timeout
+        
         while True:
-            chunk = process.stdout.readline()
-            if not chunk and process.poll() is not None:
+            # Check if we've exceeded timeout
+            if time.time() - start_time > timeout:
+                process.terminate()
+                print(f"\n{MS_RED}Streaming API request timed out after {timeout} seconds{MS_RESET}", file=sys.stderr)
                 break
                 
-            if not chunk.strip() or chunk.strip() == "data: [DONE]":
+            # Read a line with timeout
+            line_read = False
+            for _ in range(10):  # Try reading for 1 second (10 x 0.1s)
+                if process.stdout.readable():
+                    chunk = process.stdout.readline()
+                    line_read = bool(chunk)
+                    break
+                time.sleep(0.1)
+            
+            # If no line could be read and process finished
+            if not line_read and process.poll() is not None:
+                break
+                
+            # Skip empty lines
+            if not chunk or not chunk.strip() or chunk.strip() == "data: [DONE]":
                 continue
                 
-            # Process chunk
+            # Process the chunk
             try:
                 if chunk.startswith("data: "):
                     chunk = chunk[6:]  # Remove "data: " prefix
@@ -1189,10 +1400,9 @@ def stream_ai_response(task):
                     text_parts = chunk_data["candidates"][0]["content"].get("parts", [])
                     for part in text_parts:
                         if "text" in part:
-                            command_part = part["text"].strip()
-                            if command_part:  # Only add non-empty lines
-                                all_commands.append(command_part)
-                                print(command_part, end="\n", flush=True, file=sys.stderr)
+                            command_part = part["text"]
+                            all_text += command_part
+                            print(command_part, end="", flush=True, file=sys.stderr)
             except json.JSONDecodeError:
                 continue
             except Exception as e:
@@ -1202,9 +1412,22 @@ def stream_ai_response(task):
         stderr_output = process.stderr.read()
         if stderr_output:
             print(f"{MS_RED}API Error: {stderr_output}{MS_RESET}", file=sys.stderr)
+        
+        # Make sure process is terminated
+        if process.poll() is None:
+            process.terminate()
+            process.wait(timeout=1)
             
         print("", file=sys.stderr)  # New line
-        return "\n".join(all_commands)
+        
+        # Process complete text to extract commands
+        commands = []
+        for line in all_text.splitlines():
+            line = line.strip()
+            if line:  # Only add non-empty lines
+                commands.append(line)
+                
+        return "\n".join(commands)
         
     except Exception as e:
         print(f"{MS_RED}Error in streaming API call: {e}{MS_RESET}", file=sys.stderr)
@@ -1382,11 +1605,13 @@ def execute_command_chain(command_chain):
         # Handle && and || operators, but only when not in quotes
         elif not in_quotes and i < len(command_chain) - 1:
             if char == "&" and command_chain[i+1] == "&":
-                commands.append((current_command.strip(), "AND"))
+                if current_command.strip():
+                    commands.append((current_command.strip(), "AND"))
                 current_command = ""
                 i += 1  # Skip the next &
             elif char == "|" and command_chain[i+1] == "|":
-                commands.append((current_command.strip(), "OR"))
+                if current_command.strip():
+                    commands.append((current_command.strip(), "OR"))
                 current_command = ""
                 i += 1  # Skip the next |
             else:
@@ -1400,6 +1625,11 @@ def execute_command_chain(command_chain):
     if current_command.strip():
         commands.append((current_command.strip(), None))
     
+    # Limit chain length
+    if len(commands) > 10:
+        print(f"{MS_RED}Warning: Command chain too long (max 10 commands). Truncating.{MS_RESET}")
+        commands = commands[:10]
+    
     # Execute commands in chain
     last_success = True
     for cmd, operator in commands:
@@ -1411,9 +1641,10 @@ def execute_command_chain(command_chain):
                 print(f"{MS_YELLOW}Skipping command due to previous success in ||-chain: {cmd}{MS_RESET}")
             continue
         
-        # Execute the command
+        # Execute the command with timeout
         try:
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+            # Use subprocess.run with timeout
+            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=300)  # 5 minute timeout
             success = result.returncode == 0
             
             if result.stdout:
@@ -1422,6 +1653,9 @@ def execute_command_chain(command_chain):
                 print(f"{MS_RED}{result.stderr}{MS_RESET}")
             
             last_success = success
+        except subprocess.TimeoutExpired:
+            print(f"{MS_RED}Command timed out after 5 minutes: {cmd}{MS_RESET}")
+            last_success = False
         except Exception as e:
             print(f"{MS_RED}Error executing command: {e}{MS_RESET}")
             last_success = False
@@ -1432,7 +1666,6 @@ def main():
     check_dependencies()
     load_config()
     ensure_history_file()
-    load_token_cache()
     load_templates()
     load_command_groups()
     
@@ -1456,30 +1689,42 @@ def main():
     show_banner()
     
     while True:
-        print("")
-        user_input = get_user_input_with_history()
-        
-        # Check if it's a built-in command
-        if process_builtin_command(user_input):
-            continue
-        
-        # Check if it's a command chain
-        if ALLOW_COMMAND_CHAINING and ("&&" in user_input or "||" in user_input):
-            execute_command_chain(user_input)
-            continue
-        
-        # Get AI response
-        print(f"{MS_CYAN}I'll run these commands for you:{MS_RESET}", file=sys.stderr)
-        commands = get_ai_response(user_input)
-        
-        # Execute each command
-        if commands:
-            for command in commands.splitlines():
-                if command.strip():
-                    execute_command(command.strip())
-        else:
-            print(f"{MS_RED}Sorry, I couldn't generate any commands for that request.{MS_RESET}")
-            print("You can try rephrasing your request or check your API key if this continues.")
+        try:
+            print("")
+            user_input = get_user_input_with_history()
+            
+            # Check if it's a built-in command
+            if process_builtin_command(user_input):
+                continue
+            
+            # Check if it's a command chain
+            if ALLOW_COMMAND_CHAINING and ("&&" in user_input or "||" in user_input):
+                execute_command_chain(user_input)
+                continue
+            
+            # Get AI response
+            print(f"{MS_CYAN}I'll run these commands for you:{MS_RESET}", file=sys.stderr)
+            commands = get_ai_response(user_input)
+            
+            # Execute each command
+            if commands:
+                for command in commands.splitlines():
+                    if command.strip():
+                        execute_command(command.strip())
+            else:
+                print(f"{MS_RED}Sorry, I couldn't generate any commands for that request.{MS_RESET}")
+                print("You can try rephrasing your request or check your API key if this continues.")
+        except KeyboardInterrupt:
+            print(f"\n{MS_YELLOW}Operation interrupted. Press Ctrl+C again to exit or Enter to continue.{MS_RESET}")
+            try:
+                if input() == "":
+                    continue
+            except KeyboardInterrupt:
+                print(f"\n{MS_GREEN}Goodbye!{MS_RESET}")
+                sys.exit(0)
+        except Exception as e:
+            print(f"{MS_RED}An error occurred: {e}{MS_RESET}")
+            print("Please try again.")
 
 if __name__ == "__main__":
     main() 
