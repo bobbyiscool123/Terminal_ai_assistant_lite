@@ -30,10 +30,11 @@ except ImportError:
 
 # Initialize colorama with Windows specific settings
 if os.name == "nt":
-    init(wrap=True, convert=True, strip=False, autoreset=True)
-    # Force colorama to wrap stdout/stderr
+    # First wrap stdout/stderr
     sys.stdout = AnsiToWin32(sys.stdout).stream
     sys.stderr = AnsiToWin32(sys.stderr).stream
+    # Then initialize colorama
+    init(convert=True, strip=False, autoreset=True)
 else:
     init(autoreset=True)
 
