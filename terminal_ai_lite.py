@@ -28,27 +28,20 @@ try:
 except ImportError:
     CLIPBOARD_AVAILABLE = False
 
-# Initialize colorama with Windows specific settings
-if os.name == "nt":
-    # First wrap stdout/stderr
-    sys.stdout = AnsiToWin32(sys.stdout).stream
-    sys.stderr = AnsiToWin32(sys.stderr).stream
-    # Then initialize colorama
-    init(convert=True, strip=False, autoreset=True)
-else:
-    init(autoreset=True)
+# Initialize colorama - disabling colors to prevent escape sequences showing up
+init(strip=True, convert=False, autoreset=True)
 
-# Microsoft theme colors
-MS_BLUE = Fore.BLUE
-MS_CYAN = Fore.CYAN
-MS_GREEN = Fore.GREEN
-MS_YELLOW = Fore.YELLOW
-MS_RED = Fore.RED
-MS_MAGENTA = Fore.MAGENTA
-MS_WHITE = Fore.WHITE
-MS_RESET = Style.RESET_ALL
-MS_BRIGHT = Style.BRIGHT
-MS_DIM = Style.DIM
+# Since colors are disabled, set MS_* constants to empty strings
+MS_BLUE = ""
+MS_CYAN = ""
+MS_GREEN = ""
+MS_YELLOW = ""
+MS_RED = ""
+MS_MAGENTA = ""
+MS_WHITE = ""
+MS_RESET = ""
+MS_BRIGHT = ""
+MS_DIM = ""
 
 # Load environment variables from .env file
 load_dotenv()
@@ -1187,15 +1180,15 @@ def main():
     # Check for API key
     global API_KEY
     if not API_KEY:
-        print(f"{MS_YELLOW}No API key found. Please enter your Gemini API key.{MS_RESET}")
+        print("No API key found. Please enter your Gemini API key.")
         set_api_key()
         
         if not API_KEY:
-            print(f"{MS_RED}No API key provided. Some features will be disabled.{MS_RESET}")
+            print("No API key provided. Some features will be disabled.")
     
     # Display welcome message
-    print(f"{MS_CYAN}Terminal AI Assistant Lite v1.0{MS_RESET}")
-    print(f"{MS_GREEN}Type 'help' for available commands or ask me to perform tasks for you.{MS_RESET}")
+    print("Terminal AI Assistant Lite v1.0")
+    print("Type 'help' for available commands or ask me to perform tasks for you.")
     
     # Initialize command history if available
     if PROMPT_TOOLKIT_AVAILABLE:
@@ -1207,9 +1200,9 @@ def main():
             print()
             # Get user input with history support if available
             if PROMPT_TOOLKIT_AVAILABLE:
-                user_input = session.prompt(f"{MS_BRIGHT}{MS_YELLOW}What would you like me to do? {MS_RESET}")
+                user_input = session.prompt("What would you like me to do? ")
             else:
-                user_input = input(f"{MS_BRIGHT}{MS_YELLOW}What would you like me to do? {MS_RESET}")
+                user_input = input("What would you like me to do? ")
             
             user_input = user_input.strip()
             
@@ -1238,7 +1231,7 @@ def main():
                 Ensure each command is complete and executable as-is.
                 If the request cannot be satisfied with a command, respond with a single line explaining why."""
                 
-                print(f"{MS_YELLOW}Thinking...{MS_RESET}")
+                print("Thinking...")
                 
                 # Get commands for this task from AI
                 commands = get_ai_response(task_prompt)
@@ -1250,22 +1243,22 @@ def main():
                         line = line.strip()
                         if line and not line.startswith("#"):
                             if "I cannot " in line or "cannot be " in line or "Sorry, " in line:
-                                print(f"{MS_YELLOW}AI Response: {line}{MS_RESET}")
+                                print(f"AI Response: {line}")
                             else:
                                 execute_command(line)
                 else:
-                    print(f"{MS_RED}Failed to get a response from the AI.{MS_RESET}")
-                    print(f"{MS_YELLOW}You can try typing a more specific request or check your API key.{MS_RESET}")
+                    print("Failed to get a response from the AI.")
+                    print("You can try typing a more specific request or check your API key.")
         
         except KeyboardInterrupt:
-            print(f"\n{MS_YELLOW}Interrupted. Press Ctrl+C again to exit.{MS_RESET}")
+            print("\nInterrupted. Press Ctrl+C again to exit.")
             try:
                 time.sleep(1)
             except KeyboardInterrupt:
-                print(f"\n{MS_GREEN}Exiting Terminal AI Assistant.{MS_RESET}")
+                print("\nExiting Terminal AI Assistant.")
                 break
         except Exception as e:
-            print(f"{MS_RED}Error: {e}{MS_RESET}")
+            print(f"Error: {e}")
             
     # Save token cache before exit if enabled
     if USE_TOKEN_CACHE:
