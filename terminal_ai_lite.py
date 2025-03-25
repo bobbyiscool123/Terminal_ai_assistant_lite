@@ -13,7 +13,7 @@ import asyncio
 import threading
 from pathlib import Path
 from dotenv import load_dotenv
-from colorama import init, Fore, Back, Style
+from colorama import init, Fore, Back, Style, AnsiToWin32
 try:
     from prompt_toolkit import PromptSession
     from prompt_toolkit.history import FileHistory
@@ -27,8 +27,14 @@ try:
 except ImportError:
     CLIPBOARD_AVAILABLE = False
 
-# Initialize colorama for cross-platform color support
-init(autoreset=True, strip=False, convert=True)
+# Initialize colorama with Windows specific settings
+if os.name == "nt":
+    init(wrap=True, convert=True, strip=False, autoreset=True)
+    # Force colorama to wrap stdout/stderr
+    sys.stdout = AnsiToWin32(sys.stdout).stream
+    sys.stderr = AnsiToWin32(sys.stderr).stream
+else:
+    init(autoreset=True)
 
 # Microsoft theme colors
 MS_BLUE = Fore.BLUE
@@ -304,10 +310,17 @@ def ensure_history_file():
 
 def show_banner():
     """Display the terminal assistant banner"""
+    # Reset colors first
+    print(Style.RESET_ALL, end="")
+    
+    # Print banner with explicit color resets
     print(f"{MS_BLUE}+==========================================+{MS_RESET}")
     print(f"{MS_BLUE}|{MS_CYAN} Terminal AI Assistant Lite                {MS_BLUE}|{MS_RESET}")
     print(f"{MS_BLUE}|{MS_YELLOW} Type 'exit' to quit, 'help' for commands {MS_BLUE}|{MS_RESET}")
     print(f"{MS_BLUE}+==========================================+{MS_RESET}")
+    
+    # Ensure colors are reset
+    print(Style.RESET_ALL, end="")
 
 def show_help():
     """Display help information"""
