@@ -28,6 +28,12 @@ try:
 except ImportError:
     CLIPBOARD_AVAILABLE = False
 
+try:
+    import google.generativeai as genai
+    GENAI_AVAILABLE = True
+except ImportError:
+    GENAI_AVAILABLE = False
+
 # Initialize colorama with Windows specific settings
 if os.name == "nt":
     init(wrap=True, convert=True, strip=False, autoreset=True)
@@ -61,7 +67,9 @@ COMMAND_GROUPS_FILE = os.path.expanduser("~/.terminal_ai_lite_command_groups")
 MAX_HISTORY = 100
 CONFIRM_DANGEROUS = True
 STREAM_OUTPUT = True
-MODEL = "gemini-2.0-flash"
+MODEL = "gemini-1.5-flash"
+API_ENDPOINT = "https://generativelanguage.googleapis.com"
+API_VERSION = "v1"
 EXPLAIN_COMMANDS = False
 USE_STREAMING_API = True
 USE_TOKEN_CACHE = True
@@ -350,7 +358,7 @@ def show_help():
 
 def explain_command(command):
     """Get an explanation for a command"""
-    global API_KEY
+    global API_KEY, API_ENDPOINT, API_VERSION
     
     if not API_KEY:
         print(f"{MS_RED}API key not found. Cannot explain command.{MS_RESET}")
@@ -369,7 +377,7 @@ def explain_command(command):
     try:
         curl_command = [
             "curl", "-s", "-X", "POST",
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={API_KEY}",
+            f"{API_ENDPOINT}/{API_VERSION}/models/gemini-1.5-flash:generateContent?key={API_KEY}",
             "-H", "Content-Type: application/json",
             "-d", json.dumps({
                 "contents": [{
@@ -394,62 +402,76 @@ def explain_command(command):
         print(f"{MS_RED}Could not get explanation: {e}{MS_RESET}")
 
 def verify_command(command):
-    """Verify a command by getting an explanation and confirmation"""
-    global API_KEY, VERIFY_COMMANDS, MODEL
+    """Verify if a command is safe to execute"""
+    global API_KEY, MODEL, VERIFY_COMMANDS, API_ENDPOINT, API_VERSION
     
+    # Skip verification if disabled
     if not VERIFY_COMMANDS:
-        return True
+        return True, ""
     
-    print(f"{MS_YELLOW}Verifying command: {command}{MS_RESET}")
-    
-    # Check if it's a simple and safe command
+    # Quick pass for simple commands
     simple_commands = ["ls", "pwd", "echo", "cat", "cd", "clear", "whoami", "date", "time", "help"]
-    for cmd in simple_commands:
-        if command == cmd or command.startswith(cmd + " "):
-            if not any(dangerous in command for dangerous in ["$(", "`", "&", "|", ";", ">", "<"]):
-                return True
+    command_base = command.split()[0] if command.split() else ""
+    if command_base in simple_commands:
+        return True, ""
     
-    # Get verification from AI using current model
-    try:
-        prompt = f"""Analyze this terminal command and evaluate its safety:
-
+    # Check for dangerous patterns
+    if is_dangerous_command(command):
+        prompt = f"The command '{command}' appears potentially dangerous. "
+        prompt += f"Would you like to run it anyway? (y/n): "
+        choice = input(prompt)
+        if choice.lower() != 'y':
+            return False, "Command cancelled by user"
+    
+    # For other commands, call AI to verify
+    if API_KEY:
+        print(f"{MS_YELLOW}Verifying command safety...{MS_RESET}")
+        
+        os_type = "Windows" if os.name == "nt" else "Unix/Linux"
+        
+        # Prepare prompt for verification
+        prompt = f"""Analyze this shell command and assess its safety:
+        
         COMMAND: {command}
-        OPERATING SYSTEM: {"Windows" if os.name == "nt" else "Unix/Linux"}
+        OPERATING SYSTEM: {os_type}
         
-        Format your response as:
-        WHAT IT DOES: [brief explanation]
-        SAFETY: [safe/unsafe/potentially dangerous]
-        REASON: [why it's safe or unsafe]
-        ALTERNATIVES: [safer alternatives if applicable]
-        """
+        Respond with a JSON object that includes:
+        1. "safe": boolean indicating if the command is safe to run
+        2. "reason": brief explanation of your assessment
+        3. "risk_level": a number from 0-10 where 0 is completely safe and 10 is extremely dangerous
         
-        curl_command = [
-            "curl", "-s", "-X", "POST",
-            f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent?key={API_KEY}",
-            "-H", "Content-Type: application/json",
-            "-d", json.dumps({
-                "contents": [{
-                    "parts": [{
-                        "text": prompt
-                    }]
-                }],
-                "generationConfig": {
-                    "temperature": 0.1,
-                    "maxOutputTokens": 512
-                }
-            })
-        ]
+        Example response:
+        {{
+          "safe": true,
+          "reason": "This command only lists files and does not modify anything",
+          "risk_level": 0
+        }}"""
         
-        # Call API with timeout
-        result = subprocess.run(curl_command, capture_output=True, text=True, timeout=15)
-        response = result.stdout
-        
-        if not response or "error" in response:
-            print(f"{MS_RED}Error getting command verification. Proceed with caution.{MS_RESET}")
-            confirm = input(f"{MS_YELLOW}Execute anyway? (y/n):{MS_RESET} ")
-            return confirm.lower() == 'y'
-        
+        # Call API for verification
         try:
+            curl_command = [
+                "curl", "-s", "-X", "POST",
+                f"{API_ENDPOINT}/{API_VERSION}/models/{MODEL}:generateContent?key={API_KEY}",
+                "-H", "Content-Type: application/json",
+                "-d", json.dumps({
+                    "contents": [{
+                        "parts": [{
+                            "text": prompt
+                        }]
+                    }],
+                    "generationConfig": {
+                        "temperature": 0.1,
+                        "topP": 0.8,
+                        "topK": 40,
+                        "maxOutputTokens": 1024
+                    }
+                })
+            ]
+            
+            # Call API
+            result = subprocess.run(curl_command, capture_output=True, text=True)
+            response = result.stdout
+            
             response_data = json.loads(response)
             verification = response_data["candidates"][0]["content"]["parts"][0]["text"]
             
@@ -472,20 +494,13 @@ def verify_command(command):
                 print(f"{MS_YELLOW}Safety assessment unclear. Please review manually.{MS_RESET}")
             
             confirm = input(f"{MS_YELLOW}Execute this command? (y/n):{MS_RESET} ")
-            return confirm.lower() == 'y'
+            return confirm.lower() == 'y', verification
         except Exception as e:
             print(f"{MS_RED}Error parsing verification: {e}{MS_RESET}")
             confirm = input(f"{MS_YELLOW}Execute anyway? (y/n):{MS_RESET} ")
-            return confirm.lower() == 'y'
-        
-    except subprocess.TimeoutExpired:
-        print(f"{MS_RED}Verification request timed out. Proceed with caution.{MS_RESET}")
-        confirm = input(f"{MS_YELLOW}Execute anyway? (y/n):{MS_RESET} ")
-        return confirm.lower() == 'y'
-    except Exception as e:
-        print(f"{MS_RED}Verification error: {e}. Proceed with caution.{MS_RESET}")
-        confirm = input(f"{MS_YELLOW}Execute anyway? (y/n):{MS_RESET} ")
-        return confirm.lower() == 'y'
+            return confirm.lower() == 'y', "Verification error"
+    else:
+        return False, "API key not found"
 
 def is_dangerous_command(command):
     """Check if a command is potentially dangerous using regex patterns"""
@@ -688,22 +703,19 @@ def execute_command(command, is_async=False):
                     print(output)
                 if error:
                     print(f"{MS_RED}{error}{MS_RESET}")
-                
+                    
                 # Display return code if non-zero
                 if result.returncode != 0:
                     print(f"{MS_YELLOW}Command completed with return code: {result.returncode}{MS_RESET}")
-                    
+                
                 # Automatically copy to clipboard if enabled and a copy formatter was used
                 if " | copy" in command and USE_CLIPBOARD:
                     copy_to_clipboard(output)
                     
             except subprocess.TimeoutExpired:
                 print(f"{MS_RED}Command execution timed out after 5 minutes{MS_RESET}")
-            except Exception as e:
-                print(f"{MS_RED}Error executing command: {e}{MS_RESET}")
-                
     except Exception as e:
-        print(f"{MS_RED}Error setting up command execution: {e}{MS_RESET}")
+        print(f"{MS_RED}Error executing command: {e}{MS_RESET}")
 
 def format_last_output():
     """Format the last command output"""
@@ -1118,6 +1130,7 @@ def run_setup_wizard():
     """Run the setup wizard for first-time configuration"""
     global API_KEY, MODEL, EXPLAIN_COMMANDS, USE_STREAMING_API, USE_TOKEN_CACHE
     global FORMAT_OUTPUT, VERIFY_COMMANDS, USE_CLIPBOARD, ALLOW_COMMAND_CHAINING, USE_ASYNC_EXECUTION
+    global API_ENDPOINT, API_VERSION
     
     print(f"{MS_CYAN}Welcome to Terminal AI Assistant Lite Setup Wizard!{MS_RESET}")
     print(f"This will help you configure the assistant for first use.\n")
@@ -1134,25 +1147,35 @@ def run_setup_wizard():
                 f.write(f"GEMINI_API_KEY={new_key}\n")
             print(f"{MS_GREEN}API key saved.{MS_RESET}")
     
+    # API Endpoint Configuration
+    print(f"\n{MS_CYAN}API Configuration:{MS_RESET}")
+    new_endpoint = input(f"Enter Gemini API endpoint [{API_ENDPOINT}]: ")
+    if new_endpoint.strip():
+        API_ENDPOINT = new_endpoint
+    
+    new_version = input(f"Enter API version [{API_VERSION}]: ")
+    if new_version.strip():
+        API_VERSION = new_version
+        
     # Model selection
     print(f"\n{MS_CYAN}Select AI model:{MS_RESET}")
-    print(f"1. gemini-2.0-flash (faster)")
-    print(f"2. gemini-2.0-pro (more capable)")
-    print(f"3. gemini-1.5-flash (older version)")
-    print(f"4. gemini-1.5-pro (older version)")
+    print(f"1. gemini-1.5-flash (faster)")
+    print(f"2. gemini-1.5-pro (more capable)")
+    print(f"3. gemini-1.0-pro (older version)")
+    print(f"4. gemini-pro (older version)")
     print(f"5. Keep current: {MODEL}")
     
     choice = input(f"Enter choice (1-5): ")
     try:
         choice = int(choice)
         if choice == 1:
-            MODEL = "gemini-2.0-flash"
-        elif choice == 2:
-            MODEL = "gemini-2.0-pro"
-        elif choice == 3:
             MODEL = "gemini-1.5-flash"
-        elif choice == 4:
+        elif choice == 2:
             MODEL = "gemini-1.5-pro"
+        elif choice == 3:
+            MODEL = "gemini-1.0-pro"
+        elif choice == 4:
+            MODEL = "gemini-pro"
         # Choice 5 keeps current model
     except ValueError:
         print(f"{MS_YELLOW}Invalid choice. Keeping current model.{MS_RESET}")
@@ -1192,17 +1215,174 @@ def get_ai_response(task):
     """Call Gemini API to get command suggestions"""
     global API_KEY, USE_STREAMING_API
     
-    # Always call the API for every request
-    if USE_STREAMING_API:
-        commands = stream_ai_response(task)
+    if not GENAI_AVAILABLE:
+        print(f"{MS_YELLOW}Google Generative AI library not available. Install with: pip install google-generativeai{MS_RESET}")
+        print(f"{MS_YELLOW}Falling back to curl-based API calls.{MS_RESET}")
+        # Fall back to curl-based methods
+        if USE_STREAMING_API:
+            commands = stream_ai_response_curl(task)
+        else:
+            commands = call_ai_api_curl(task)
     else:
-        commands = call_ai_api(task)
+        # Use the Python library
+        if USE_STREAMING_API:
+            commands = stream_ai_response(task)
+        else:
+            commands = call_ai_api(task)
     
     return commands
 
 def call_ai_api(task):
-    """Non-streaming API call to Gemini"""
+    """Non-streaming API call to Gemini using Python library"""
     global API_KEY, MODEL
+    
+    if not API_KEY:
+        print(f"{MS_RED}API key not found in .env file. Please set GEMINI_API_KEY in your .env file.{MS_RESET}")
+        return ""
+    
+    current_dir = os.getcwd()
+    os_type = "Windows" if os.name == "nt" else "Unix/Linux"
+    
+    # Configure the genai library
+    genai.configure(api_key=API_KEY)
+    
+    # Prepare the prompt with OS-specific context
+    prompt = f"""You are a terminal command expert. Generate executable commands for the following task.
+    
+    TASK: {task}
+    CURRENT DIRECTORY: {current_dir}
+    OPERATING SYSTEM: {os_type}
+    
+    Respond ONLY with the exact commands to execute, one per line.
+    Do not include explanations, markdown formatting, or any text that is not meant to be executed.
+    Ensure each command is complete and executable as-is.
+    If the request cannot be satisfied with a command, respond with a single line explaining why."""
+    
+    print(f"{MS_YELLOW}Thinking...{MS_RESET}", file=sys.stderr)
+    
+    try:
+        # Create a generative model instance
+        model = genai.GenerativeModel(MODEL)
+        
+        # Configure generation parameters
+        generation_config = {
+            "temperature": 0.2,
+            "top_p": 0.8,
+            "top_k": 40,
+            "max_output_tokens": 1024,
+        }
+        
+        # Generate content
+        response = model.generate_content(
+            prompt,
+            generation_config=generation_config
+        )
+        
+        if not response or not hasattr(response, 'text'):
+            print(f"{MS_RED}Empty response from API.{MS_RESET}", file=sys.stderr)
+            return ""
+        
+        # Get the commands from the response
+        commands = response.text
+        
+        # Clean up the response
+        commands = "\n".join(line.strip() for line in commands.splitlines() if line.strip())
+        
+        if not commands:
+            print(f"{MS_YELLOW}API returned empty command set.{MS_RESET}", file=sys.stderr)
+            
+        return commands
+            
+    except Exception as e:
+        print(f"{MS_RED}Error calling API: {e}{MS_RESET}", file=sys.stderr)
+        return ""
+
+def stream_ai_response(task):
+    """Streaming API call to Gemini using Python library"""
+    global API_KEY, MODEL
+    
+    if not API_KEY:
+        print(f"{MS_RED}API key not found in .env file. Please set GEMINI_API_KEY in your .env file.{MS_RESET}")
+        return ""
+    
+    current_dir = os.getcwd()
+    os_type = "Windows" if os.name == "nt" else "Unix/Linux"
+    
+    # Configure the genai library
+    genai.configure(api_key=API_KEY)
+    
+    # Prepare the prompt with OS-specific context
+    prompt = f"""You are a terminal command expert. Generate executable commands for the following task.
+    
+    TASK: {task}
+    CURRENT DIRECTORY: {current_dir}
+    OPERATING SYSTEM: {os_type}
+    
+    Respond ONLY with the exact commands to execute, one per line.
+    Do not include explanations, markdown formatting, or any text that is not meant to be executed.
+    Ensure each command is complete and executable as-is.
+    If the request cannot be satisfied with a command, respond with a single line explaining why."""
+    
+    print(f"{MS_YELLOW}Thinking...{MS_RESET}", file=sys.stderr)
+    
+    try:
+        # Create a generative model instance
+        model = genai.GenerativeModel(MODEL)
+        
+        # Configure generation parameters
+        generation_config = {
+            "temperature": 0.2,
+            "top_p": 0.8,
+            "top_k": 40,
+            "max_output_tokens": 1024,
+        }
+        
+        # Create a variable to collect all text
+        all_text = ""
+        print(f"{MS_CYAN}Commands (streaming):{MS_RESET}", file=sys.stderr)
+        
+        # Start time for timeout tracking
+        start_time = time.time()
+        timeout = 60  # 60 seconds timeout
+        
+        # Generate content with streaming
+        for chunk in model.generate_content(
+            prompt,
+            generation_config=generation_config,
+            stream=True
+        ):
+            # Check if we've exceeded timeout
+            if time.time() - start_time > timeout:
+                print(f"\n{MS_RED}Streaming API request timed out after {timeout} seconds{MS_RESET}", file=sys.stderr)
+                break
+                
+            if not hasattr(chunk, 'text') or not chunk.text:
+                continue
+                
+            # Get the text from the chunk
+            text = chunk.text
+            all_text += text
+            print(text, end="", flush=True, file=sys.stderr)
+            
+        print("", file=sys.stderr)  # New line
+        
+        # Process complete text to extract commands
+        commands = []
+        for line in all_text.splitlines():
+            line = line.strip()
+            if line:  # Only add non-empty lines
+                commands.append(line)
+                
+        return "\n".join(commands)
+        
+    except Exception as e:
+        print(f"{MS_RED}Error in streaming API call: {e}{MS_RESET}", file=sys.stderr)
+        return ""
+
+# Rename original functions to use as fallbacks
+def call_ai_api_curl(task):
+    """Non-streaming API call to Gemini using curl"""
+    global API_KEY, MODEL, API_ENDPOINT, API_VERSION
     
     if not API_KEY:
         print(f"{MS_RED}API key not found in .env file. Please set GEMINI_API_KEY in your .env file.{MS_RESET}")
@@ -1229,7 +1409,7 @@ def call_ai_api(task):
         # Construct API request
         curl_command = [
             "curl", "-s", "-X", "POST",
-            f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent?key={API_KEY}",
+            f"{API_ENDPOINT}/{API_VERSION}/models/{MODEL}:generateContent?key={API_KEY}",
             "-H", "Content-Type: application/json",
             "-d", json.dumps({
                 "contents": [{
@@ -1309,9 +1489,9 @@ def call_ai_api(task):
         print(f"{MS_RED}Error calling API: {e}{MS_RESET}", file=sys.stderr)
         return ""
 
-def stream_ai_response(task):
-    """Streaming API call to Gemini"""
-    global API_KEY, MODEL
+def stream_ai_response_curl(task):
+    """Streaming API call to Gemini using curl"""
+    global API_KEY, MODEL, API_ENDPOINT, API_VERSION
     
     if not API_KEY:
         print(f"{MS_RED}API key not found in .env file. Please set GEMINI_API_KEY in your .env file.{MS_RESET}")
@@ -1338,7 +1518,7 @@ def stream_ai_response(task):
         # Construct API request for streaming
         curl_command = [
             "curl", "-s", "--no-buffer", "-X", "POST",
-            f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:streamGenerateContent?key={API_KEY}",
+            f"{API_ENDPOINT}/{API_VERSION}/models/{MODEL}:streamGenerateContent?key={API_KEY}",
             "-H", "Content-Type: application/json",
             "-d", json.dumps({
                 "contents": [{

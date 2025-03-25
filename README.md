@@ -14,6 +14,8 @@ By this point in time, if you're aren't making your own AI assistant, what are y
 8. **Persistent API Key Storage**: Securely saves your API key in a .env file
 9. **Small Footprint**: Minimal disk space and memory usage
 10. **Smart Response Fallbacks**: Works even when API is unavailable
+11. **Google Generative AI Integration**: Uses the official Google Generative AI Python library when available
+12. **Termux Support**: Works on mobile devices via Termux
 
 ## How to Use
 
@@ -25,7 +27,7 @@ cd Terminal_ai_assistant_lite
 
 2. Install the required dependencies:
 ```bash
-pip install python-dotenv colorama
+pip install -r requirements.txt
 ```
 
 3. Start the assistant:
@@ -41,25 +43,30 @@ python terminal_ai_lite.py
 - Python 3.6+
 - python-dotenv (for .env file support)
 - colorama (for cross-platform color support)
-- curl (for API communication)
+- curl (for API communication when fallback is needed)
+
+### Optional
+- google-generativeai (for improved API interaction)
+- prompt_toolkit (for enhanced command history)
+- pyperclip (for clipboard integration)
 
 ### Installation on different platforms
 
 #### Windows
 ```bash
-pip install python-dotenv colorama
+pip install -r requirements.txt
 # curl is usually bundled with Git for Windows
 ```
 
 #### macOS
 ```bash
-pip install python-dotenv colorama
+pip install -r requirements.txt
 # curl is pre-installed
 ```
 
 #### Linux/Termux
 ```bash
-pip install python-dotenv colorama
+pip install -r requirements.txt
 # curl is usually pre-installed, if not:
 # apt-get install curl (Debian/Ubuntu)
 # pkg install curl (Termux)
@@ -86,9 +93,21 @@ The AI will generate and execute the appropriate commands in sequence.
 - `clear`: Clear the screen
 - `history`: Show command history
 - `config`: Show current configuration
+- `set`: Change configuration settings
 - `cd DIR`: Change directory
 - `pwd`: Show current directory
 - `api-key`: Update your API key
+- `templates`: Manage command templates
+- `groups`: Manage command groups
+- `format`: Format last command output
+- `copy`: Copy last command output to clipboard
+- `async`: Run command in background
+- `jobs`: Show running background jobs
+- `kill`: Kill a background job
+- `!TEMPLATE`: Run a saved template
+- `verify`: Toggle command verification
+- `chain`: Toggle command chaining
+- `setup`: Run setup wizard
 
 ## API Key Management
 
@@ -107,6 +126,15 @@ Try these examples:
 3. "Monitor CPU and memory usage in real-time"
 4. "Find the largest 10 files in my home directory"
 5. "Create a compressed backup of my Documents folder"
+
+## Recent Changes
+
+1. **Added Google Generative AI Library Support**: The assistant now uses the official Google Generative AI Python library when available, with fallback to curl-based API calls.
+2. **Improved Error Handling**: Enhanced try-except blocks and error reporting throughout the codebase.
+3. **Fixed Indentation Issues**: Resolved multiple Python syntax and indentation errors.
+4. **Termux Support**: Added special support for Termux-specific commands and mobile environment.
+5. **Updated API Endpoint Handling**: More flexible configuration of API endpoints and versions.
+6. **Enhanced Command Chain Processing**: Better parsing and execution of command chains with && and || operators.
 
 ## Disclaimer
 
