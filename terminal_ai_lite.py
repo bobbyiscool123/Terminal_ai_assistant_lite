@@ -28,7 +28,7 @@ except ImportError:
     CLIPBOARD_AVAILABLE = False
 
 # Initialize colorama for cross-platform color support
-init()
+init(autoreset=True, strip=False, convert=True)
 
 # Microsoft theme colors
 MS_BLUE = Fore.BLUE
@@ -1326,11 +1326,14 @@ def get_user_input_with_history():
             # Fallback on error
             print(f"{MS_YELLOW}Error using prompt_toolkit: {e}. Falling back to basic input.{MS_RESET}")
     
-    # Otherwise, use basic input with colorama for Windows compatibility
+    # For Windows PowerShell, use a simpler prompt
+    if os.name == "nt":
+        return input("> ")
+    
+    # For other systems, try colored prompt
     try:
         return input(f"{MS_CYAN}> {MS_RESET}")
     except Exception:
-        # If colorama fails, fall back to plain prompt
         return input("> ")
 
 def execute_command_chain(command_chain):
