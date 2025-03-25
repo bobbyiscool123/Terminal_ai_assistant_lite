@@ -1060,15 +1060,13 @@ def call_ai_api(task):
     current_dir = os.getcwd()
     
     # Prepare the prompt
-    prompt = f"""You are a terminal command expert for Termux on Android. Given the following task, provide a list of commands to execute in sequence.
-    Each command should be a single line and should be executable in Termux.
+    prompt = f"""You are a terminal command expert. Given the following task, provide a list of commands to execute in sequence.
+    Each command should be a single line and should be executable in the current environment.
     Task: {task}
     Current directory: {current_dir}
     Return only the commands, one per line, without any explanations or markdown formatting.
-    Use Termux-specific commands where appropriate (e.g., pkg instead of apt, termux-info for system info).
-    For system information, use: termux-info, df -h, free -h, top -n 1, ifconfig, ps aux
-    For package management, use: pkg update, pkg upgrade, pkg install, pkg remove
-    For file operations, use standard Unix commands: ls, cd, cp, mv, rm, etc."""
+    Do not include any text before or after the commands.
+    Each command should be complete and executable as-is."""
     
     print(f"{MS_YELLOW}Thinking...{MS_RESET}", file=sys.stderr)
     
@@ -1083,7 +1081,12 @@ def call_ai_api(task):
                     "parts": [{
                         "text": prompt
                     }]
-                }]
+                }],
+                "generationConfig": {
+                    "temperature": 0.1,
+                    "topP": 0.8,
+                    "topK": 40
+                }
             })
         ]
         
@@ -1109,7 +1112,9 @@ def call_ai_api(task):
         try:
             response_data = json.loads(response)
             commands = response_data["candidates"][0]["content"]["parts"][0]["text"]
-            return commands.strip()
+            # Clean up the response to ensure only commands are returned
+            commands = "\n".join(line.strip() for line in commands.splitlines() if line.strip())
+            return commands
         except (json.JSONDecodeError, KeyError, IndexError) as e:
             print(f"{MS_RED}Failed to extract commands from API response: {e}{MS_RESET}", file=sys.stderr)
             return ""
@@ -1129,12 +1134,13 @@ def stream_ai_response(task):
     current_dir = os.getcwd()
     
     # Prepare the prompt
-    prompt = f"""You are a terminal command expert for Termux on Android. Given the following task, provide a list of commands to execute in sequence.
-    Each command should be a single line and should be executable in Termux.
+    prompt = f"""You are a terminal command expert. Given the following task, provide a list of commands to execute in sequence.
+    Each command should be a single line and should be executable in the current environment.
     Task: {task}
     Current directory: {current_dir}
     Return only the commands, one per line, without any explanations or markdown formatting.
-    Use Termux-specific commands where appropriate (e.g., pkg instead of apt)."""
+    Do not include any text before or after the commands.
+    Each command should be complete and executable as-is."""
     
     print(f"{MS_YELLOW}Thinking...{MS_RESET}", file=sys.stderr)
     
@@ -1151,7 +1157,9 @@ def stream_ai_response(task):
                     }]
                 }],
                 "generationConfig": {
-                    "temperature": 0.1
+                    "temperature": 0.1,
+                    "topP": 0.8,
+                    "topK": 40
                 }
             })
         ]
@@ -1160,7 +1168,7 @@ def stream_ai_response(task):
         process = subprocess.Popen(curl_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         
         # Collect all response chunks
-        all_commands = ""
+        all_commands = []
         print(f"{MS_CYAN}Commands (streaming):{MS_RESET}", file=sys.stderr)
         
         while True:
@@ -1181,9 +1189,10 @@ def stream_ai_response(task):
                     text_parts = chunk_data["candidates"][0]["content"].get("parts", [])
                     for part in text_parts:
                         if "text" in part:
-                            command_part = part["text"]
-                            all_commands += command_part
-                            print(command_part, end="", flush=True, file=sys.stderr)
+                            command_part = part["text"].strip()
+                            if command_part:  # Only add non-empty lines
+                                all_commands.append(command_part)
+                                print(command_part, end="\n", flush=True, file=sys.stderr)
             except json.JSONDecodeError:
                 continue
             except Exception as e:
@@ -1195,7 +1204,7 @@ def stream_ai_response(task):
             print(f"{MS_RED}API Error: {stderr_output}{MS_RESET}", file=sys.stderr)
             
         print("", file=sys.stderr)  # New line
-        return all_commands.strip()
+        return "\n".join(all_commands)
         
     except Exception as e:
         print(f"{MS_RED}Error in streaming API call: {e}{MS_RESET}", file=sys.stderr)
