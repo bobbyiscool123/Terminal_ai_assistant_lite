@@ -1,5 +1,10 @@
 # Terminal AI Assistant Lite
 
+[![License: GPL-3.0](https://img.shields.io/badge/License-GPL%203.0-blue.svg)](https://opensource.org/licenses/GPL-3.0)
+[![Python 3.6+](https://img.shields.io/badge/Python-3.6+-blue.svg)](https://www.python.org/downloads/)
+[![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/bobbyiscool123/Terminal_ai_assistant_lite/ci.yml?branch=main)](https://github.com/bobbyiscool123/Terminal_ai_assistant_lite/actions)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/bobbyiscool123/Terminal_ai_assistant_lite/blob/main/CONTRIBUTING.md)
+
 By this point in time, if you're aren't making your own AI assistant, what are you doing? Use this as a template to build on. All the code is just a suggestion. Use other AI models to build it for you. Just feed terminal_ai_lite into whatever LLM (AI) you want and build/modify this in sections. Happy Hacking.
 
 ## Features
