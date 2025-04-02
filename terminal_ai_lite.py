@@ -14,7 +14,17 @@ import threading
 import select
 from pathlib import Path
 from dotenv import load_dotenv
-from colorama import init, Fore, Back, Style, AnsiToWin32
+try:
+    from rich.console import Console
+    from rich.theme import Theme
+    from rich.prompt import Prompt
+    RICH_AVAILABLE = True
+except ImportError:
+    RICH_AVAILABLE = False
+    from colorama import init, Fore, Style
+    # Initialize colorama with compatibility settings
+    init(strip=False, convert=True, autoreset=True)
+
 try:
     from prompt_toolkit import PromptSession
     from prompt_toolkit.history import FileHistory
@@ -28,20 +38,70 @@ try:
 except ImportError:
     CLIPBOARD_AVAILABLE = False
 
-# Initialize colorama properly
-init(autoreset=True)
+# Set up rich console if available
+if RICH_AVAILABLE:
+    custom_theme = Theme({
+        "info": "cyan",
+        "warning": "yellow",
+        "error": "red",
+        "success": "green",
+        "prompt": "yellow bold"
+    })
+    console = Console(theme=custom_theme)
 
-# Microsoft theme colors
-MS_BLUE = Fore.BLUE
-MS_CYAN = Fore.CYAN
-MS_GREEN = Fore.GREEN
-MS_YELLOW = Fore.YELLOW
-MS_RED = Fore.RED
-MS_MAGENTA = Fore.MAGENTA
-MS_WHITE = Fore.WHITE
-MS_RESET = Style.RESET_ALL
-MS_BRIGHT = Style.BRIGHT
-MS_DIM = Style.DIM
+# Microsoft theme colors for compatibility with existing code
+if RICH_AVAILABLE:
+    # Define functions to emulate colorama with rich
+    def ms_print(text, style=None):
+        console.print(text, style=style)
+        
+    MS_BLUE = "blue"
+    MS_CYAN = "cyan"
+    MS_GREEN = "green"
+    MS_YELLOW = "yellow"
+    MS_RED = "red"
+    MS_MAGENTA = "magenta"
+    MS_WHITE = "white"
+    MS_RESET = ""
+    MS_BRIGHT = "bold "
+    MS_DIM = "dim "
+else:
+    # Use colorama directly
+    MS_BLUE = Fore.BLUE
+    MS_CYAN = Fore.CYAN
+    MS_GREEN = Fore.GREEN
+    MS_YELLOW = Fore.YELLOW
+    MS_RED = Fore.RED
+    MS_MAGENTA = Fore.MAGENTA
+    MS_WHITE = Fore.WHITE
+    MS_RESET = Style.RESET_ALL
+    MS_BRIGHT = Style.BRIGHT
+    MS_DIM = Style.DIM
+
+# Helper function for styled printing
+def print_styled(text, style=None):
+    """Print text with styling using rich if available, otherwise use colorama"""
+    if RICH_AVAILABLE:
+        console.print(text, style=style)
+    else:
+        # Map rich style names to colorama constants
+        style_map = {
+            "cyan": MS_CYAN,
+            "green": MS_GREEN,
+            "yellow": MS_YELLOW,
+            "red": MS_RED,
+            "blue": MS_BLUE,
+            "magenta": MS_MAGENTA,
+            "white": MS_WHITE,
+            "bold": MS_BRIGHT,
+            "dim": MS_DIM
+        }
+        
+        # Apply styling based on rich style name
+        if style in style_map:
+            print(f"{style_map[style]}{text}{MS_RESET}")
+        else:
+            print(text)
 
 # Load environment variables from .env file
 load_dotenv()
@@ -850,8 +910,8 @@ def kill_background_job(job_id):
 
 def show_help():
     """Display help information"""
-    print(f"{MS_CYAN}Terminal AI Assistant Lite - Help{MS_RESET}")
-    print(f"\n{MS_YELLOW}General Commands:{MS_RESET}")
+    print_styled("Terminal AI Assistant Lite - Help", style="cyan")
+    print_styled("\nGeneral Commands:", style="yellow")
     print("  help       - Show this help information")
     print("  exit/quit  - Exit the program")
     print("  clear      - Clear the screen")
@@ -859,16 +919,16 @@ def show_help():
     print("  config     - Show current configuration")
     print("  set KEY=VAL- Change configuration settings")
     
-    print(f"\n{MS_YELLOW}Navigation:{MS_RESET}")
+    print_styled("\nNavigation:", style="yellow")
     print("  cd DIR     - Change directory")
     print("  pwd        - Show current directory")
     
-    print(f"\n{MS_YELLOW}API & Configuration:{MS_RESET}")
+    print_styled("\nAPI & Configuration:", style="yellow")
     print("  api-key    - Update your Gemini API key")
     print("  templates  - Manage command templates")
     print("  groups     - Manage command groups")
     
-    print(f"\n{MS_YELLOW}Execution Control:{MS_RESET}")
+    print_styled("\nExecution Control:", style="yellow")
     print("  format     - Format last command output")
     print("  copy       - Copy last command output to clipboard")
     print("  async      - Run command in background")
@@ -879,13 +939,13 @@ def show_help():
     print("  chain      - Toggle command chaining")
     print("  setup      - Run setup wizard")
     
-    print(f"\n{MS_YELLOW}Examples:{MS_RESET}")
+    print_styled("\nExamples:", style="yellow")
     print("  Find all text files: find . -name \"*.txt\"")
     print("  Check disk space: df -h")
     print("  Format JSON output: cat data.json | format json")
     print("  Run in background: async long-running-command")
     
-    print(f"\n{MS_GREEN}For AI assistance, simply type your task in natural language.{MS_RESET}")
+    print_styled("\nFor AI assistance, simply type your task in natural language.", style="green")
 
 def show_history():
     """Display command history"""
@@ -964,7 +1024,7 @@ def set_api_key():
     """Set or update API key"""
     global API_KEY
     
-    print(f"{MS_CYAN}Enter your Gemini API Key (input will be hidden):{MS_RESET}")
+    print_styled("Enter your Gemini API Key (input will be hidden):", style="cyan")
     
     try:
         # Handle input differently based on platform
@@ -989,7 +1049,7 @@ def set_api_key():
         api_key = input("API Key: ")
         
     if not api_key:
-        print(f"{MS_YELLOW}API key not provided. Keeping existing key.{MS_RESET}")
+        print_styled("API key not provided. Keeping existing key.", style="yellow")
         return
         
     # Save to .env file
@@ -997,7 +1057,7 @@ def set_api_key():
         f.write(f"GEMINI_API_KEY={api_key}")
         
     API_KEY = api_key
-    print(f"{MS_GREEN}API key updated successfully.{MS_RESET}")
+    print_styled("API key updated successfully.", style="green")
 
 def manage_templates():
     """Manage command templates"""
@@ -1195,36 +1255,33 @@ def main():
     # Check for API key
     global API_KEY
     if not API_KEY:
-        print(f"{MS_YELLOW}No API key found. Please enter your Gemini API key.{MS_RESET}")
+        print_styled("No API key found. Please enter your Gemini API key.", style="yellow")
         set_api_key()
         
         if not API_KEY:
-            print(f"{MS_RED}No API key provided. Some features will be disabled.{MS_RESET}")
+            print_styled("No API key provided. Some features will be disabled.", style="red")
     
     # Display welcome message
-    print(f"{MS_CYAN}Terminal AI Assistant Lite v1.0{MS_RESET}")
-    print(f"{MS_GREEN}Type 'help' for available commands or ask me to perform tasks for you.{MS_RESET}")
-    
-    # Initialize command history if available
-    if PROMPT_TOOLKIT_AVAILABLE:
-        session = PromptSession(history=FileHistory(HISTORY_FILE))
+    print_styled("Terminal AI Assistant Lite v1.0", style="cyan")
+    print_styled("Type 'help' for available commands or ask me to perform tasks for you.", style="green")
     
     # Main loop
     while True:
         try:
-            print()
-            # Get user input with history support if available
+            # Simplified prompt that works in all environments
+            prompt = "What would you like me to do? "
+            
             if PROMPT_TOOLKIT_AVAILABLE:
-                user_input = session.prompt(f"{MS_BRIGHT}{MS_YELLOW}What would you like me to do? {MS_RESET}")
+                session = PromptSession(history=FileHistory(HISTORY_FILE))
+                user_input = session.prompt(prompt)
             else:
-                user_input = input(f"{MS_BRIGHT}{MS_YELLOW}What would you like me to do? {MS_RESET}")
-            
-            user_input = user_input.strip()
-            
-            # Skip empty input
-            if not user_input:
+                user_input = input(prompt)
+                
+            # Skip empty inputs
+            if not user_input.strip():
                 continue
-            
+
+            # Continue with the rest of the function
             # Check if this looks like a command or a task description
             if user_input.startswith("!") or any(user_input.startswith(cmd) for cmd in ["help", "exit", "quit", "clear", "history", "config", "set ", "cd ", "pwd", "api-key", "templates", "groups", "verify", "chain", "jobs", "kill ", "setup"]):
                 # Handle as a built-in command
@@ -1246,7 +1303,7 @@ def main():
                 Ensure each command is complete and executable as-is.
                 If the request cannot be satisfied with a command, respond with a single line explaining why."""
                 
-                print(f"{MS_YELLOW}Thinking...{MS_RESET}")
+                print_styled("Thinking...", style="yellow")
                 
                 # Get commands for this task from AI
                 commands = get_ai_response(task_prompt)
@@ -1258,22 +1315,24 @@ def main():
                         line = line.strip()
                         if line and not line.startswith("#"):
                             if "I cannot " in line or "cannot be " in line or "Sorry, " in line:
-                                print(f"{MS_YELLOW}AI Response: {line}{MS_RESET}")
+                                print_styled(f"AI Response: {line}", style="yellow")
                             else:
                                 execute_command(line)
                 else:
-                    print(f"{MS_RED}Failed to get a response from the AI.{MS_RESET}")
-                    print(f"{MS_YELLOW}You can try typing a more specific request or check your API key.{MS_RESET}")
+                    print_styled("Failed to get a response from the AI.", style="red")
+                    print_styled("You can try typing a more specific request or check your API key.", style="yellow")
         
         except KeyboardInterrupt:
-            print(f"\n{MS_YELLOW}Interrupted. Press Ctrl+C again to exit.{MS_RESET}")
+            print()
+            print_styled("Interrupted. Press Ctrl+C again to exit.", style="yellow")
             try:
                 time.sleep(1)
             except KeyboardInterrupt:
-                print(f"\n{MS_GREEN}Exiting Terminal AI Assistant.{MS_RESET}")
+                print()
+                print_styled("Exiting Terminal AI Assistant.", style="green")
                 break
         except Exception as e:
-            print(f"{MS_RED}Error: {e}{MS_RESET}")
+            print_styled(f"Error: {e}", style="red")
             
     # Save token cache before exit if enabled
     if USE_TOKEN_CACHE:
