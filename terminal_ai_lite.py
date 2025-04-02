@@ -14,6 +14,7 @@ import threading
 import select
 from pathlib import Path
 from dotenv import load_dotenv
+from collections import OrderedDict
 try:
     from rich.console import Console
     from rich.theme import Theme
@@ -127,6 +128,7 @@ VERIFY_COMMANDS = True
 USE_CLIPBOARD = True
 ALLOW_COMMAND_CHAINING = True
 USE_ASYNC_EXECUTION = True
+MAX_CACHE_SIZE = 100  # Maximum number of items in cache before LRU eviction
 
 # Get API key from .env file
 API_KEY = os.getenv("GEMINI_API_KEY")
@@ -134,8 +136,11 @@ API_KEY = os.getenv("GEMINI_API_KEY")
 # Store active background processes
 background_processes = {}
 
-# Token cache dictionary
-token_cache = {}
+# Token cache dictionary (now using OrderedDict for LRU functionality)
+token_cache = OrderedDict()
+
+# Command result cache dictionary (also using OrderedDict)
+command_cache = OrderedDict()
 
 # Command templates
 templates = {
@@ -251,29 +256,92 @@ def load_token_cache():
     if os.path.exists(TOKEN_CACHE_FILE):
         try:
             with open(TOKEN_CACHE_FILE, 'rb') as f:
-                token_cache = pickle.load(f)
+                # Convert regular dict to OrderedDict
+                loaded_cache = pickle.load(f)
+                token_cache = OrderedDict()
                 
-            # Clean expired tokens
-            current_time = time.time()
-            expired_keys = []
-            for key, (value, timestamp) in token_cache.items():
-                if current_time - timestamp > TOKEN_CACHE_EXPIRY * 86400:  # seconds in a day
-                    expired_keys.append(key)
-            
-            for key in expired_keys:
-                del token_cache[key]
+                # Clean expired tokens and add valid ones to OrderedDict
+                current_time = time.time()
+                for key, (value, timestamp) in loaded_cache.items():
+                    if current_time - timestamp <= TOKEN_CACHE_EXPIRY * 86400:  # seconds in a day
+                        token_cache[key] = (value, timestamp)
                 
         except Exception as e:
             print(f"{MS_YELLOW}Error loading token cache: {e}. Creating new cache.{MS_RESET}")
-            token_cache = {}
+            token_cache = OrderedDict()
 
 def save_token_cache():
     """Save token cache to file"""
     try:
         with open(TOKEN_CACHE_FILE, 'wb') as f:
-            pickle.dump(token_cache, f)
+            pickle.dump(dict(token_cache), f)  # Convert to regular dict for backward compatibility
     except Exception as e:
         print(f"{MS_YELLOW}Error saving token cache: {e}{MS_RESET}")
+
+# Command cache functions
+def load_command_cache():
+    """Load command cache from file if it exists"""
+    global command_cache
+    
+    cache_file = os.path.expanduser("~/.terminal_ai_lite_command_cache")
+    if os.path.exists(cache_file):
+        try:
+            with open(cache_file, 'rb') as f:
+                # Convert regular dict to OrderedDict
+                loaded_cache = pickle.load(f)
+                command_cache = OrderedDict()
+                
+                # Clean expired entries and add valid ones to OrderedDict
+                current_time = time.time()
+                for key, (value, timestamp) in loaded_cache.items():
+                    if current_time - timestamp <= TOKEN_CACHE_EXPIRY * 86400:  # use same expiry as token cache
+                        command_cache[key] = (value, timestamp)
+                
+        except Exception as e:
+            print(f"{MS_YELLOW}Error loading command cache: {e}. Creating new cache.{MS_RESET}")
+            command_cache = OrderedDict()
+
+def save_command_cache():
+    """Save command cache to file"""
+    cache_file = os.path.expanduser("~/.terminal_ai_lite_command_cache")
+    try:
+        with open(cache_file, 'wb') as f:
+            pickle.dump(dict(command_cache), f)  # Convert to regular dict for backward compatibility
+    except Exception as e:
+        print(f"{MS_YELLOW}Error saving command cache: {e}{MS_RESET}")
+
+def get_cached_command_result(task):
+    """Get cached result for a command if available and not expired"""
+    global command_cache
+    
+    if task in command_cache:
+        result, timestamp = command_cache[task]
+        current_time = time.time()
+        
+        # Check if the cached result is still valid
+        if current_time - timestamp <= TOKEN_CACHE_EXPIRY * 86400:  # seconds in a day
+            # Move this item to the end of the OrderedDict (mark as most recently used)
+            command_cache.move_to_end(task)
+            print(f"{MS_GREEN}Using cached result.{MS_RESET}")
+            return result
+    
+    return None
+
+def cache_command_result(task, result):
+    """Cache the result of a command with timestamp using LRU policy"""
+    global command_cache
+    
+    if task and result:
+        # If cache is at capacity, remove the oldest item (first in OrderedDict)
+        if len(command_cache) >= MAX_CACHE_SIZE:
+            command_cache.popitem(last=False)
+        
+        # Add the new item (it will be at the end, marking it as most recently used)
+        command_cache[task] = (result, time.time())
+        
+        # Periodically save cache to disk (every 10 new entries)
+        if len(command_cache) % 10 == 0:
+            save_command_cache()
 
 def check_dependencies():
     """Check if required dependencies are installed"""
@@ -447,13 +515,124 @@ def verify_command(command):
     
     return True, ""
 
-def get_ai_response(task):
-    """Get AI response for a given task"""
-    global API_KEY, MODEL, API_ENDPOINT, API_VERSION
+def get_ai_response(task, batch_commands=None):
+    """Get AI response for a given task
+    
+    Args:
+        task (str): The task description or prompt for the AI
+        batch_commands (list, optional): List of commands to process in a batch
+    
+    Returns:
+        str or dict: If batch_commands is None, returns a string with the AI response
+                     If batch_commands is provided, returns a dict mapping commands to responses
+    """
+    global API_KEY, MODEL, API_ENDPOINT, API_VERSION, USE_TOKEN_CACHE
     
     if not API_KEY:
         print(f"{MS_RED}Error: No API key found. Please set your API key first.{MS_RESET}")
         return None
+    
+    # Handle batch processing
+    if batch_commands:
+        # Create batch cache key
+        batch_key = "BATCH:" + "|".join(batch_commands)
+        
+        # Check command cache first if enabled
+        if USE_TOKEN_CACHE:
+            cached_result = get_cached_command_result(batch_key)
+            if cached_result:
+                return cached_result  # This will be a dictionary of results
+        
+        # Build a combined prompt for all commands
+        combined_prompt = f"""You are a terminal command expert. Generate executable commands for the following tasks.
+        Please respond with a JSON object where the keys are the task numbers and values are arrays of command strings.
+        
+        OPERATING SYSTEM: {"Windows" if os.name == "nt" else "Unix/Linux"}
+        CURRENT DIRECTORY: {os.getcwd()}
+        
+        """
+        
+        for i, cmd in enumerate(batch_commands):
+            combined_prompt += f"TASK {i+1}: {cmd}\n"
+        
+        combined_prompt += """
+        Respond ONLY with a valid JSON object in this format:
+        {
+          "1": ["command1", "command2"],
+          "2": ["command1"],
+          ...
+        }
+        Do not include explanations or any text that is not part of the JSON object.
+        If a request cannot be satisfied with commands, use an array with a single element explaining why.
+        """
+        
+        try:
+            # Prepare the API request
+            curl_command = [
+                "curl", "-s", "-X", "POST",
+                f"{API_ENDPOINT}/{API_VERSION}/models/{MODEL}:generateContent?key={API_KEY}",
+                "-H", "Content-Type: application/json",
+                "-d", json.dumps({
+                    "contents": [{
+                        "parts": [{
+                            "text": combined_prompt
+                        }]
+                    }],
+                    "generationConfig": {
+                        "temperature": 0.7,
+                        "topP": 0.8,
+                        "topK": 40,
+                        "maxOutputTokens": 4096  # Increased for batch processing
+                    }
+                })
+            ]
+            
+            # Execute the curl command
+            result = subprocess.run(curl_command, capture_output=True, text=True)
+            response = result.stdout
+            
+            # Parse the response
+            response_data = json.loads(response)
+            result_text = response_data["candidates"][0]["content"]["parts"][0]["text"]
+            
+            # Extract the JSON object from the response
+            result_text = result_text.strip()
+            # Remove any markdown formatting if present
+            if result_text.startswith("```json"):
+                result_text = result_text[7:]
+            if result_text.endswith("```"):
+                result_text = result_text[:-3]
+                
+            result_text = result_text.strip()
+            
+            # Parse the JSON response
+            result_dict = json.loads(result_text)
+            
+            # Convert the response to a dictionary mapping task to commands
+            processed_results = {}
+            for i, cmd in enumerate(batch_commands):
+                task_key = str(i+1)
+                if task_key in result_dict:
+                    processed_results[cmd] = result_dict[task_key]
+                else:
+                    processed_results[cmd] = ["No response for this task"]
+            
+            # Cache the result if caching is enabled
+            if USE_TOKEN_CACHE:
+                cache_command_result(batch_key, processed_results)
+                
+            return processed_results
+            
+        except Exception as e:
+            print(f"{MS_RED}Error getting batch AI response: {e}{MS_RESET}")
+            return {cmd: [f"Error: {e}"] for cmd in batch_commands}
+    
+    # Handle single command (original behavior)
+    # Check command cache first if enabled
+    if USE_TOKEN_CACHE:
+        cached_result = get_cached_command_result(task)
+        if cached_result:
+            return cached_result
     
     try:
         # Prepare the API request
@@ -482,7 +661,13 @@ def get_ai_response(task):
         
         # Parse the response
         response_data = json.loads(response)
-        return response_data["candidates"][0]["content"]["parts"][0]["text"]
+        result_text = response_data["candidates"][0]["content"]["parts"][0]["text"]
+        
+        # Cache the result if caching is enabled
+        if USE_TOKEN_CACHE:
+            cache_command_result(task, result_text)
+            
+        return result_text
         
     except Exception as e:
         print(f"{MS_RED}Error getting AI response: {e}{MS_RESET}")
@@ -703,12 +888,16 @@ def execute_command(command, is_async=False):
         return None
 
 def process_user_command(command):
-    """Process a built-in command or pass to shell"""
-    global API_KEY, VERIFY_COMMANDS, ALLOW_COMMAND_CHAINING, MODEL
+    """Process a user command"""
+    global ALLOW_COMMAND_CHAINING
     
-    if not command or command.isspace():
-        return
-        
+    # Check if this is a batch command (semicolon-separated list)
+    if ";" in command and ALLOW_COMMAND_CHAINING:
+        batch_commands = [cmd.strip() for cmd in command.split(";") if cmd.strip()]
+        if len(batch_commands) > 1 and not any(cmd.startswith(("!", "cd ", "config", "api-key", "exit", "quit", "clear", "help")) for cmd in batch_commands):
+            process_batch_commands(batch_commands)
+            return
+    
     # Check for built-in commands
     if command.lower() == "exit" or command.lower() == "quit":
         print(f"{MS_GREEN}Exiting Terminal AI Assistant.{MS_RESET}")
@@ -1239,6 +1428,38 @@ def run_setup_wizard():
     print(f"\n{MS_GREEN}Setup complete! The assistant is ready to use.{MS_RESET}")
     print(f"{MS_YELLOW}Type 'help' to see available commands or ask me to perform tasks for you.{MS_RESET}")
 
+def process_batch_commands(commands):
+    """Process multiple commands in a single API call"""
+    if not commands:
+        print(f"{MS_YELLOW}No commands specified for batch processing.{MS_RESET}")
+        return
+    
+    print(f"{MS_CYAN}Processing {len(commands)} commands in batch mode...{MS_RESET}")
+    
+    # Get responses for all commands in a single API call
+    results = get_ai_response(None, batch_commands=commands)
+    
+    if not results:
+        print(f"{MS_RED}Failed to get batch responses from the AI.{MS_RESET}")
+        return
+    
+    # Process each command's result
+    for i, (cmd, cmd_results) in enumerate(results.items()):
+        print(f"\n{MS_CYAN}Batch Command {i+1}/{len(commands)}:{MS_RESET} {cmd}")
+        
+        if isinstance(cmd_results, list):
+            for line in cmd_results:
+                line = line.strip()
+                if line:
+                    if line.startswith(("I cannot", "Cannot", "Sorry", "Error:")):
+                        print_styled(f"AI Response: {line}", style="yellow")
+                    else:
+                        execute_command(line)
+        else:
+            print_styled(f"Unexpected response format: {cmd_results}", style="red")
+    
+    print(f"\n{MS_GREEN}Batch command processing completed.{MS_RESET}")
+
 def main():
     """Main function to run the terminal assistant"""
     # Check dependencies
@@ -1251,6 +1472,7 @@ def main():
     # Load token cache if enabled
     if USE_TOKEN_CACHE:
         load_token_cache()
+        load_command_cache()
     
     # Check for API key
     global API_KEY
@@ -1337,6 +1559,7 @@ def main():
     # Save token cache before exit if enabled
     if USE_TOKEN_CACHE:
         save_token_cache()
+        save_command_cache()
 
 if __name__ == "__main__":
     main() 
