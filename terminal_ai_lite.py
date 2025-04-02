@@ -253,6 +253,7 @@ VERIFY_COMMANDS = True
 USE_CLIPBOARD = True
 ALLOW_COMMAND_CHAINING = True
 USE_ASYNC_EXECUTION = True
+AUTO_CLEAR = False  # Auto-clear terminal after command execution
 
 # Get API key from .env file
 API_KEY = os.getenv("GEMINI_API_KEY")
@@ -680,18 +681,18 @@ def execute_command(command, is_async=False):
             command = command[6:].strip()
         
         if not command:
-            print(f"{MS_YELLOW}No command specified for async execution.{MS_RESET}")
+            print_colored("No command specified for async execution.", MS_YELLOW)
             return
             
         command_id = start_async_command(command)
-        print(f"{MS_GREEN}Command is running in the background. Use 'jobs' to check status.{MS_RESET}")
+        print_colored(f"Command is running in the background. Use 'jobs' to check status.", MS_GREEN)
         return
     
     # Verify command before execution if enabled
     if VERIFY_COMMANDS:
         safe, reason = verify_command(command)
         if not safe:
-            print(f"{MS_RED}Command execution cancelled: {reason}{MS_RESET}")
+            print_colored(f"Command execution cancelled: {reason}", MS_RED)
             return
 
     # Record start time
@@ -717,7 +718,7 @@ def execute_command(command, is_async=False):
             process.stdout.fileno()
             process.stderr.fileno()
             
-            print(f"{MS_CYAN}Output:{MS_RESET}")
+            print_colored("Output:", MS_CYAN)
             
             # Stream output until process completes
             output_lines = []
@@ -742,7 +743,7 @@ def execute_command(command, is_async=False):
                         line = fd.readline()
                         if line:
                             error_lines.append(line)
-                            print(f"{MS_RED}{line}{MS_RESET}", end="", flush=True)
+                            print_colored(line, MS_RED, end="", flush=True)
             
             # Read any remaining output
             remaining_output, remaining_error = process.communicate()
@@ -753,7 +754,7 @@ def execute_command(command, is_async=False):
                 
             if remaining_error:
                 error_lines.append(remaining_error)
-                print(f"{MS_RED}{remaining_error}{MS_RESET}", end="", flush=True)
+                print_colored(remaining_error, MS_RED, end="", flush=True)
                 
             # Join output lines
             output = "".join(output_lines)
@@ -761,11 +762,11 @@ def execute_command(command, is_async=False):
             
             # Display any errors
             if error and not error.isspace():
-                print(f"{MS_RED}{error}{MS_RESET}")
+                print_colored(error, MS_RED)
                 
             # Display return code if non-zero
             if process.returncode != 0:
-                print(f"{MS_YELLOW}Command completed with return code: {process.returncode}{MS_RESET}")
+                print_colored(f"Command completed with return code: {process.returncode}", MS_YELLOW)
                 
             # Automatically copy to clipboard if enabled and a copy formatter was used
             if " | copy" in command and USE_CLIPBOARD:
@@ -777,10 +778,10 @@ def execute_command(command, is_async=False):
                     format_parts = command.split(" | format ")
                     formatter = format_parts[1].strip()
                     formatted_output = format_output(output, formatter)
-                    print(f"{MS_CYAN}Formatted output ({formatter}):{MS_RESET}")
+                    print_colored(f"Formatted output ({formatter}):", MS_CYAN)
                     print(formatted_output)
                 except Exception as e:
-                    print(f"{MS_RED}Error formatting output: {e}{MS_RESET}")
+                    print_colored(f"Error formatting output: {e}", MS_RED)
             
             # Calculate execution time
             end_time = time.time()
@@ -790,6 +791,12 @@ def execute_command(command, is_async=False):
             timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             print_colored(f"Command completed in {execution_time:.2f} seconds.", MS_GREEN)
             
+            # Auto-clear the terminal after a short delay if enabled
+            if AUTO_CLEAR:
+                print_colored("Terminal will be cleared in 2 seconds...", MS_YELLOW)
+                time.sleep(2)
+                os.system("cls" if os.name == "nt" else "clear")
+            
             return output
             
         else:
@@ -798,7 +805,7 @@ def execute_command(command, is_async=False):
             
             # Check for errors
             if result.stderr:
-                print(f"{MS_RED}{result.stderr}{MS_RESET}")
+                print_colored(result.stderr, MS_RED)
                 
             # Print output
             if result.stdout:
@@ -806,7 +813,7 @@ def execute_command(command, is_async=False):
                 
             # Display return code if non-zero
             if result.returncode != 0:
-                print(f"{MS_YELLOW}Command completed with return code: {result.returncode}{MS_RESET}")
+                print_colored(f"Command completed with return code: {result.returncode}", MS_YELLOW)
                 
             # Calculate execution time
             end_time = time.time()
@@ -815,14 +822,29 @@ def execute_command(command, is_async=False):
             # Display execution time
             print_colored(f"Command completed in {execution_time:.2f} seconds.", MS_GREEN)
             
+            # Auto-clear the terminal after a short delay if enabled
+            if AUTO_CLEAR:
+                print_colored("Terminal will be cleared in 2 seconds...", MS_YELLOW)
+                time.sleep(2)
+                os.system("cls" if os.name == "nt" else "clear")
+            
             return result.stdout
             
     except KeyboardInterrupt:
-        print(f"{MS_YELLOW}Command interrupted by user.{MS_RESET}")
+        print_colored("Command interrupted by user.", MS_YELLOW)
         return None
     except Exception as e:
-        print(f"{MS_RED}Error executing command: {e}{MS_RESET}")
+        print_colored(f"Error executing command: {e}", MS_RED)
         return None
+
+def toggle_auto_clear():
+    """Toggle auto-clear terminal after commands"""
+    global AUTO_CLEAR
+    # Get the current value and negate it
+    current_value = AUTO_CLEAR
+    AUTO_CLEAR = not current_value
+    print_colored(f"Auto-clear terminal: {'Enabled' if AUTO_CLEAR else 'Disabled'}", MS_GREEN)
+    return AUTO_CLEAR
 
 def process_user_command(command):
     """Process a built-in command or pass to shell"""
@@ -890,6 +912,10 @@ def process_user_command(command):
         
     elif command.lower() == "chain":
         toggle_command_chaining()
+        return
+        
+    elif command.lower() == "auto-clear" or command.lower() == "autoclear":
+        toggle_auto_clear()
         return
         
     elif command.lower() == "jobs":
@@ -1057,6 +1083,7 @@ def show_help():
     print("  !TEMPLATE  - Run a saved template")
     print("  verify     - Toggle command verification")
     print("  chain      - Toggle command chaining")
+    print("  auto-clear - Toggle auto-clear terminal after commands")
     print("  setup      - Run setup wizard")
     
     print_styled("\nExamples:", style="yellow")
@@ -1094,13 +1121,14 @@ def show_config():
     print(f"  Output Streaming: {'Enabled' if STREAM_OUTPUT else 'Disabled'}")
     print(f"  Clipboard Integration: {'Enabled' if USE_CLIPBOARD else 'Disabled'}")
     print(f"  Async Command Execution: {'Enabled' if USE_ASYNC_EXECUTION else 'Disabled'}")
+    print(f"  Auto-Clear Terminal: {'Enabled' if AUTO_CLEAR else 'Disabled'}")
 
 def set_config(config_str):
     """Set configuration values"""
-    global MODEL, VERIFY_COMMANDS, ALLOW_COMMAND_CHAINING, STREAM_OUTPUT, USE_CLIPBOARD, USE_ASYNC_EXECUTION
+    global MODEL, VERIFY_COMMANDS, ALLOW_COMMAND_CHAINING, STREAM_OUTPUT, USE_CLIPBOARD, USE_ASYNC_EXECUTION, AUTO_CLEAR
     
     if not config_str or "=" not in config_str:
-        print(f"{MS_YELLOW}Invalid config format. Use: set KEY=VALUE{MS_RESET}")
+        print_colored("Invalid config format. Use: set KEY=VALUE", MS_YELLOW)
         return
         
     key, value = config_str.split("=", 1)
@@ -1109,36 +1137,39 @@ def set_config(config_str):
     
     if key == "model":
         MODEL = value
-        print(f"{MS_GREEN}Model set to: {MODEL}{MS_RESET}")
+        print_colored(f"Model set to: {MODEL}", MS_GREEN)
     elif key == "verify":
         VERIFY_COMMANDS = value.lower() in ["true", "yes", "1", "on", "enabled"]
-        print(f"{MS_GREEN}Command verification: {'Enabled' if VERIFY_COMMANDS else 'Disabled'}{MS_RESET}")
+        print_colored(f"Command verification: {'Enabled' if VERIFY_COMMANDS else 'Disabled'}", MS_GREEN)
     elif key == "chain":
         ALLOW_COMMAND_CHAINING = value.lower() in ["true", "yes", "1", "on", "enabled"]
-        print(f"{MS_GREEN}Command chaining: {'Enabled' if ALLOW_COMMAND_CHAINING else 'Disabled'}{MS_RESET}")
+        print_colored(f"Command chaining: {'Enabled' if ALLOW_COMMAND_CHAINING else 'Disabled'}", MS_GREEN)
     elif key == "stream":
         STREAM_OUTPUT = value.lower() in ["true", "yes", "1", "on", "enabled"]
-        print(f"{MS_GREEN}Output streaming: {'Enabled' if STREAM_OUTPUT else 'Disabled'}{MS_RESET}")
+        print_colored(f"Output streaming: {'Enabled' if STREAM_OUTPUT else 'Disabled'}", MS_GREEN)
     elif key == "clipboard":
         USE_CLIPBOARD = value.lower() in ["true", "yes", "1", "on", "enabled"]
-        print(f"{MS_GREEN}Clipboard integration: {'Enabled' if USE_CLIPBOARD else 'Disabled'}{MS_RESET}")
+        print_colored(f"Clipboard integration: {'Enabled' if USE_CLIPBOARD else 'Disabled'}", MS_GREEN)
     elif key == "async":
         USE_ASYNC_EXECUTION = value.lower() in ["true", "yes", "1", "on", "enabled"]
-        print(f"{MS_GREEN}Async execution: {'Enabled' if USE_ASYNC_EXECUTION else 'Disabled'}{MS_RESET}")
+        print_colored(f"Async execution: {'Enabled' if USE_ASYNC_EXECUTION else 'Disabled'}", MS_GREEN)
+    elif key == "auto_clear" or key == "autoclear":
+        AUTO_CLEAR = value.lower() in ["true", "yes", "1", "on", "enabled"]
+        print_colored(f"Auto-clear terminal: {'Enabled' if AUTO_CLEAR else 'Disabled'}", MS_GREEN)
     else:
-        print(f"{MS_YELLOW}Unknown configuration key: {key}{MS_RESET}")
+        print_colored(f"Unknown configuration key: {key}", MS_YELLOW)
 
 def toggle_verification():
     """Toggle command verification"""
     global VERIFY_COMMANDS
     VERIFY_COMMANDS = not VERIFY_COMMANDS
-    print(f"{MS_GREEN}Command verification: {'Enabled' if VERIFY_COMMANDS else 'Disabled'}{MS_RESET}")
+    print_colored(f"Command verification: {'Enabled' if VERIFY_COMMANDS else 'Disabled'}", MS_GREEN)
 
 def toggle_command_chaining():
     """Toggle command chaining"""
     global ALLOW_COMMAND_CHAINING
     ALLOW_COMMAND_CHAINING = not ALLOW_COMMAND_CHAINING
-    print(f"{MS_GREEN}Command chaining: {'Enabled' if ALLOW_COMMAND_CHAINING else 'Disabled'}{MS_RESET}")
+    print_colored(f"Command chaining: {'Enabled' if ALLOW_COMMAND_CHAINING else 'Disabled'}", MS_GREEN)
 
 def set_api_key():
     """Set or update API key"""
@@ -1308,7 +1339,7 @@ def manage_command_groups():
 
 def run_setup_wizard():
     """Run setup wizard for first-time configuration"""
-    global MODEL, VERIFY_COMMANDS, STREAM_OUTPUT
+    global MODEL, VERIFY_COMMANDS, STREAM_OUTPUT, AUTO_CLEAR
     
     print(f"{MS_CYAN}Terminal AI Assistant Setup Wizard{MS_RESET}")
     print(f"{MS_YELLOW}This wizard will help you configure the assistant.{MS_RESET}")
@@ -1352,6 +1383,15 @@ def run_setup_wizard():
     if stream:
         STREAM_OUTPUT = stream == 'y'
         print(f"{MS_GREEN}Output streaming: {'Enabled' if STREAM_OUTPUT else 'Disabled'}{MS_RESET}")
+        
+    # Configure auto-clear
+    print(f"\n{MS_CYAN}Step 5: Auto-Clear Terminal{MS_RESET}")
+    print(f"{MS_YELLOW}Auto-clear automatically clears the terminal after each command.{MS_RESET}")
+    print(f"{MS_YELLOW}Current setting: {'Enabled' if AUTO_CLEAR else 'Disabled'}{MS_RESET}")
+    auto_clear = input(f"{MS_YELLOW}Enable auto-clear terminal? (y/n):{MS_RESET} ").lower()
+    if auto_clear:
+        AUTO_CLEAR = auto_clear == 'y'
+        print(f"{MS_GREEN}Auto-clear terminal: {'Enabled' if AUTO_CLEAR else 'Disabled'}{MS_RESET}")
     
     print(f"\n{MS_GREEN}Setup complete! The assistant is ready to use.{MS_RESET}")
     print(f"{MS_YELLOW}Type 'help' to see available commands or ask me to perform tasks for you.{MS_RESET}")
@@ -1371,15 +1411,15 @@ def main():
     
     # Check for API key
     if not API_KEY:
-        print_styled("No API key found. Please enter your Gemini API key.", style="yellow")
+        print_colored("No API key found. Please enter your Gemini API key.", MS_YELLOW)
         set_api_key()
         
         if not API_KEY:
-            print_styled("No API key provided. Some features will be disabled.", style="red")
+            print_colored("No API key provided. Some features will be disabled.", MS_RED)
     
     # Display welcome message
-    print_styled("Terminal AI Assistant Lite v1.0", style="cyan")
-    print_styled("Type 'help' for available commands or ask me to perform tasks for you.", style="green")
+    print_colored("Terminal AI Assistant Lite v1.0", MS_CYAN)
+    print_colored("Type 'help' for available commands or ask me to perform tasks for you.", MS_GREEN)
     
     # Main loop
     while True:
@@ -1399,7 +1439,7 @@ def main():
 
             # Continue with the rest of the function
             # Check if this looks like a command or a task description
-            if user_input.startswith("!") or any(user_input.startswith(cmd) for cmd in ["help", "exit", "quit", "clear", "history", "config", "set ", "cd ", "pwd", "api-key", "templates", "groups", "verify", "chain", "jobs", "kill ", "setup"]):
+            if user_input.startswith("!") or any(user_input.startswith(cmd) for cmd in ["help", "exit", "quit", "clear", "history", "config", "set ", "cd ", "pwd", "api-key", "templates", "groups", "verify", "chain", "auto-clear", "jobs", "kill ", "setup"]):
                 # Handle as a built-in command
                 process_user_command(user_input)
             else:
@@ -1419,7 +1459,7 @@ def main():
                 Ensure each command is complete and executable as-is.
                 If the request cannot be satisfied with a command, respond with a single line explaining why."""
                 
-                print_styled("Thinking...", style="yellow")
+                print_colored("Thinking...", MS_YELLOW)
                 
                 # Get commands for this task from AI
                 commands = get_ai_response(task_prompt)
@@ -1431,24 +1471,24 @@ def main():
                         line = line.strip()
                         if line and not line.startswith("#"):
                             if "I cannot " in line or "cannot be " in line or "Sorry, " in line:
-                                print_styled(f"AI Response: {line}", style="yellow")
+                                print_colored(f"AI Response: {line}", MS_YELLOW)
                             else:
                                 execute_command(line)
                 else:
-                    print_styled("Failed to get a response from the AI.", style="red")
-                    print_styled("You can try typing a more specific request or check your API key.", style="yellow")
+                    print_colored("Failed to get a response from the AI.", MS_RED)
+                    print_colored("You can try typing a more specific request or check your API key.", MS_YELLOW)
         
         except KeyboardInterrupt:
             print()
-            print_styled("Interrupted. Press Ctrl+C again to exit.", style="yellow")
+            print_colored("Interrupted. Press Ctrl+C again to exit.", MS_YELLOW)
             try:
                 time.sleep(1)
             except KeyboardInterrupt:
                 print()
-                print_styled("Exiting Terminal AI Assistant.", style="green")
+                print_colored("Exiting Terminal AI Assistant.", MS_GREEN)
                 break
         except Exception as e:
-            print_styled(f"Error: {e}", style="red")
+            print_colored(f"Error: {e}", MS_RED)
             
     # Save token cache before exit if enabled
     if USE_TOKEN_CACHE:
