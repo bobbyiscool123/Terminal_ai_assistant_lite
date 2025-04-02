@@ -483,36 +483,78 @@ def verify_command(command):
             verification = re.sub(r'```json\s*', '', verification)
             verification = re.sub(r'```\s*', '', verification)
             
-            print(f"{MS_CYAN}Command Verification:{MS_RESET}")
-            print(f"{verification.strip()}")
-            
-            # Extract the safety assessment
-            safety_line = ""
-            for line in verification.splitlines():
-                if line.strip().startswith("SAFETY:"):
-                    safety_line = line.strip().lower()
-                    break
-            
             # Try to parse the JSON to determine safety
             try:
                 verification_json = json.loads(verification.strip())
                 is_safe = verification_json.get("safe", False)
                 risk_level = verification_json.get("risk_level", 5)
+                reason = verification_json.get("reason", "No reason provided")
+                
+                # Format the verification output with better styling
+                if RICH_AVAILABLE:
+                    print()
+                    console.print("Command Verification:", style="bold cyan")
+                    console.print("{", style="dim")
+                    
+                    # Safety indicator with color based on safety
+                    safety_style = "green bold" if is_safe else "red bold"
+                    console.print(f'  "safe": ', style="cyan", end="")
+                    console.print(f"{str(is_safe).lower()}", style=safety_style)
+                    
+                    # Reason with indentation
+                    console.print(f'  "reason": ', style="cyan", end="")
+                    console.print(f'"{reason}"', style="white")
+                    
+                    # Risk level with color based on level
+                    risk_style = "green" if risk_level <= 3 else "yellow" if risk_level <= 6 else "red bold"
+                    console.print(f'  "risk_level": ', style="cyan", end="")
+                    console.print(f"{risk_level}", style=risk_style)
+                    
+                    console.print("}", style="dim")
+                    print()
+                else:
+                    # Fallback formatting for environments without rich
+                    print(f"{MS_CYAN}Command Verification:{MS_RESET}")
+                    print("{")
+                    
+                    # Safety indicator
+                    safety_color = MS_GREEN if is_safe else MS_RED
+                    print(f'  {MS_CYAN}"safe":{MS_RESET} {safety_color}{str(is_safe).lower()}{MS_RESET},')
+                    
+                    # Reason
+                    print(f'  {MS_CYAN}"reason":{MS_RESET} "{reason}",')
+                    
+                    # Risk level
+                    risk_color = MS_GREEN if risk_level <= 3 else MS_YELLOW if risk_level <= 6 else MS_RED
+                    print(f'  {MS_CYAN}"risk_level":{MS_RESET} {risk_color}{risk_level}{MS_RESET}')
+                    
+                    print("}")
                 
                 if not is_safe or risk_level > 5:
                     print(f"{MS_RED}This command may be unsafe. Please review carefully.{MS_RESET}")
                 else:
                     print(f"{MS_GREEN}Command appears to be safe.{MS_RESET}")
             except json.JSONDecodeError:
-                # If we can't parse JSON, fall back to keyword matching
-                if "unsafe" in safety_line or "dangerous" in safety_line:
+                # If we can't parse JSON, fall back to plain text display
+                print(f"{MS_CYAN}Command Verification:{MS_RESET}")
+                print(verification.strip())
+                
+                # Fall back to keyword matching for safety assessment
+                safety_line = ""
+                for line in verification.splitlines():
+                    if line.strip().startswith('"SAFETY":') or line.strip().startswith('"safe":'):
+                        safety_line = line.strip().lower()
+                        break
+                
+                if "unsafe" in safety_line or "dangerous" in safety_line or "false" in safety_line:
                     print(f"{MS_RED}This command may be unsafe. Please review carefully.{MS_RESET}")
-                elif "safe" in safety_line:
+                elif "safe" in safety_line or "true" in safety_line:
                     print(f"{MS_GREEN}Command appears to be safe.{MS_RESET}")
                 else:
                     print(f"{MS_YELLOW}Safety assessment unclear. Please review manually.{MS_RESET}")
             
-            confirm = input(f"{MS_YELLOW}Execute this command? (y/n):{MS_RESET} ")
+            # Ask for user confirmation
+            confirm = input(f"{MS_YELLOW}Execute this command? (y/n): {MS_RESET}")
             return confirm.lower() == 'y', verification
             
         except Exception as e:
@@ -943,14 +985,27 @@ def execute_command(command, is_async=False):
             # Record execution time
             execution_time = time.time() - start_time
             
+            result_dict = {
+                "output": output,
+                "error": error,
+                "return_code": return_code,
+                "execution_time": execution_time
+            }
+            
             if return_code != 0:
-                print(f"\n{MS_RED}Command failed with return code {return_code}.{MS_RESET}")
+                print(f"\n{MS_RED}Command completed with return code {return_code}.{MS_RESET}")
                 if error:
                     print(f"{MS_RED}Error output: {error.strip()}{MS_RESET}")
             else:
                 print(f"\n{MS_GREEN}Command completed in {execution_time:.2f} seconds.{MS_RESET}")
+               
+            # Ask if user wants to clear the console
+            if output or error:
+                clear_choice = input(f"{MS_YELLOW}Clear console? (y/n): {MS_RESET}")
+                if clear_choice.lower() == 'y':
+                    os.system("cls" if os.name == "nt" else "clear") 
                 
-            return return_code
+            return result_dict
             
         else:
             # Use simpler method if streaming is disabled
@@ -967,9 +1022,19 @@ def execute_command(command, is_async=False):
                     "Check if you have the necessary permissions to run this command."
                 )
             
+            # Record execution time
+            execution_time = time.time() - start_time
+            
+            result_dict = {
+                "output": result.stdout,
+                "error": result.stderr,
+                "return_code": result.returncode,
+                "execution_time": execution_time
+            }
+            
             # Check for errors
             if result.returncode != 0:
-                print(f"{MS_RED}Command failed with return code {result.returncode}.{MS_RESET}")
+                print(f"{MS_RED}Command completed with return code {result.returncode}.{MS_RESET}")
                 if result.stderr:
                     print(f"{MS_RED}Error output: {result.stderr.strip()}{MS_RESET}")
                     
@@ -978,13 +1043,16 @@ def execute_command(command, is_async=False):
                 print(f"{MS_CYAN}Output:{MS_RESET}")
                 print(result.stdout)
                 
-            # Record execution time
-            execution_time = time.time() - start_time
-            
             if result.returncode == 0:
                 print(f"{MS_GREEN}Command completed in {execution_time:.2f} seconds.{MS_RESET}")
+            
+            # Ask if user wants to clear the console
+            if result.stdout or result.stderr:
+                clear_choice = input(f"{MS_YELLOW}Clear console? (y/n): {MS_RESET}")
+                if clear_choice.lower() == 'y':
+                    os.system("cls" if os.name == "nt" else "clear")
                 
-            return result.returncode
+            return result_dict
     
     except KeyboardInterrupt:
         print(f"{MS_YELLOW}Command interrupted by user.{MS_RESET}")
@@ -1472,7 +1540,35 @@ def run_template(template_name):
     for line in lines:
         line = line.strip()
         if line and not line.startswith("#"):
-            execute_command(line)
+            if "I cannot " in line or "cannot be " in line or "Sorry, " in line:
+                print_styled(f"AI Response: {line}", style="yellow")
+            else:
+                try:
+                    result = execute_command(line)
+                    # If command returned error, feed it back to Gemini for possible recovery
+                    if isinstance(result, dict) and result.get("return_code", 0) != 0 and result.get("error"):
+                        error_feedback_prompt = f"""
+                        The previous command '{line}' failed with error:
+                        {result['error']}
+                        
+                        Please suggest a correct solution for this error or an alternative approach.
+                        Respond ONLY with the exact command to fix the issue, or explain if no command can resolve it.
+                        """
+                        
+                        print_styled("Resolving error...", style="yellow")
+                        error_solution = get_ai_response(error_feedback_prompt)
+                        
+                        if error_solution and not any(phrase in error_solution for phrase in ["I cannot", "cannot be", "Sorry,"]):
+                            print_styled("Attempting solution:", style="cyan")
+                            # Try the suggested fix
+                            try:
+                                execute_command(error_solution.strip())
+                            except Exception as e:
+                                print_styled(format_error(e), style="red")
+                        else:
+                            print_styled(f"AI response: {error_solution}", style="yellow")
+                except Exception as e:
+                    print_styled(format_error(e), style="red")
             
 def manage_command_groups():
     """Manage command groups"""
@@ -1616,7 +1712,29 @@ def process_batch_commands(commands):
                             print_styled(f"AI Response: {line}", style="yellow")
                         else:
                             try:
-                                execute_command(line)
+                                result = execute_command(line)
+                                # If command returned error, feed it back to Gemini for possible recovery
+                                if isinstance(result, dict) and result.get("return_code", 0) != 0 and result.get("error"):
+                                    error_feedback_prompt = f"""
+                                    The previous command '{line}' failed with error:
+                                    {result['error']}
+                                    
+                                    Please suggest a correct solution for this error or an alternative approach.
+                                    Respond ONLY with the exact command to fix the issue, or explain if no command can resolve it.
+                                    """
+                                    
+                                    print_styled("Resolving error...", style="yellow")
+                                    error_solution = get_ai_response(error_feedback_prompt)
+                                    
+                                    if error_solution and not any(phrase in error_solution for phrase in ["I cannot", "cannot be", "Sorry,"]):
+                                        print_styled("Attempting solution:", style="cyan")
+                                        # Try the suggested fix
+                                        try:
+                                            execute_command(error_solution.strip())
+                                        except Exception as e:
+                                            print_styled(format_error(e), style="red")
+                                    else:
+                                        print_styled(f"AI response: {error_solution}", style="yellow")
                             except Exception as e:
                                 print_styled(format_error(e), style="red")
             else:
@@ -1797,7 +1915,29 @@ def main():
                                     print_styled(f"AI Response: {line}", style="yellow")
                                 else:
                                     try:
-                                        execute_command(line)
+                                        result = execute_command(line)
+                                        # If command returned error, feed it back to Gemini for possible recovery
+                                        if isinstance(result, dict) and result.get("return_code", 0) != 0 and result.get("error"):
+                                            error_feedback_prompt = f"""
+                                            The previous command '{line}' failed with error:
+                                            {result['error']}
+                                            
+                                            Please suggest a correct solution for this error or an alternative approach.
+                                            Respond ONLY with the exact command to fix the issue, or explain if no command can resolve it.
+                                            """
+                                            
+                                            print_styled("Resolving error...", style="yellow")
+                                            error_solution = get_ai_response(error_feedback_prompt)
+                                            
+                                            if error_solution and not any(phrase in error_solution for phrase in ["I cannot", "cannot be", "Sorry,"]):
+                                                print_styled("Attempting solution:", style="cyan")
+                                                # Try the suggested fix
+                                                try:
+                                                    execute_command(error_solution.strip())
+                                                except Exception as e:
+                                                    print_styled(format_error(e), style="red")
+                                            else:
+                                                print_styled(f"AI response: {error_solution}", style="yellow")
                                     except Exception as e:
                                         print_styled(format_error(e), style="red")
                     else:
