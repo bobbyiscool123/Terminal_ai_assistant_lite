@@ -260,6 +260,7 @@ VERIFY_COMMANDS = True
 USE_CLIPBOARD = True
 ALLOW_COMMAND_CHAINING = True
 USE_ASYNC_EXECUTION = True
+MAX_CACHE_SIZE = 100  # Maximum number of items in cache before LRU eviction
 AUTO_CLEAR = False  # Auto-clear terminal after command execution
 
 # Get API key from .env file
