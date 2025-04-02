@@ -1056,6 +1056,7 @@ def set_api_key():
     with open(".env", "w") as f:
         f.write(f"GEMINI_API_KEY={api_key}")
         
+    # Make sure to use the global variable
     API_KEY = api_key
     print_styled("API key updated successfully.", style="green")
 
