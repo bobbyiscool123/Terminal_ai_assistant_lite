@@ -12,7 +12,17 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        python-version: [3.7, 3.8, 3.9]
+        python-version: [3.8, 3.9, '3.10']
+        exclude:
+          # Exclude Python 3.8 on macOS to reduce matrix size
+          - os: macos-latest
+            python-version: 3.8
+        include:
+          # Add Python 3.7 only for Ubuntu and Windows
+          - os: ubuntu-latest
+            python-version: 3.7
+          - os: windows-latest
+            python-version: 3.7
 
     steps:
     - uses: actions/checkout@v3
