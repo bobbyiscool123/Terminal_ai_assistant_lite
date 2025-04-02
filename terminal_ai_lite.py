@@ -195,15 +195,24 @@ def safe_print(*args, **kwargs):
                     print_colored(content, color_code, **kwargs)
                     return
     
-    # Handle cases with literal color label prefixes (e.g. "cyanExecuting:")
+    # Detect and remove color prefixes (e.g., "cyanExecuting:")
+    # This is causing the issue with color names showing up in output
     if len(args) == 1 and isinstance(args[0], str):
         text = args[0]
+        found_prefix = False
+        # Check each color name to see if it's a prefix
         for color_name in ["cyan", "green", "yellow", "red", "blue", "magenta", "white"]:
-            if text.lower().startswith(color_name):
-                clean_text = text[len(color_name):]
-                color_code = COLOR_NAMES.get(f"MS_{color_name.upper()}", "")
-                print_colored(clean_text, color_code, **kwargs)
-                return
+            if text.lower().startswith(color_name.lower()):
+                # Check if the color prefix is followed by text (not just the color name)
+                if len(text) > len(color_name):
+                    clean_text = text[len(color_name):]
+                    color_code = COLOR_NAMES.get(f"MS_{color_name.upper()}", "")
+                    print_colored(clean_text, color_code, **kwargs)
+                    found_prefix = True
+                    break
+        
+        if found_prefix:
+            return
     
     # Fall back to original print for all other cases
     original_print(*args, **kwargs)
@@ -552,7 +561,7 @@ def set_api_key():
     
     if os.path.exists(api_key_file):
         print_colored("An API key file already exists.", MS_GREEN)
-        show = input(f"{MS_YELLOW}Show current key? (y/n):{MS_RESET} ").lower()
+        show = print_input_prompt("Show current key? (y/n): ", MS_YELLOW).lower()
         
         if show == 'y':
             try:
@@ -564,7 +573,7 @@ def set_api_key():
                 print_colored(f"Error reading API key: {e}", MS_RED)
     
     # Ask for new key
-    new_key = input(f"{MS_YELLOW}Enter your Gemini API key (or press Enter to keep current):{MS_RESET} ").strip()
+    new_key = print_input_prompt("Enter your Gemini API key (or press Enter to keep current): ", MS_YELLOW).strip()
     
     if new_key:
         # Save to environment and file
@@ -994,7 +1003,7 @@ def execute_command(command, is_async=False):
     # Record start time
     start_time = time.time()
     
-    print(f"{MS_CYAN}Executing: {command}{MS_RESET}")
+    print_colored(f"Executing: {command}", MS_CYAN)
     
     # Execute the command
     try:
@@ -1025,7 +1034,7 @@ def execute_command(command, is_async=False):
             process.stdout.fileno()
             process.stderr.fileno()
             
-            print(f"{MS_CYAN}Output:{MS_RESET}")
+            print_colored("Output:", MS_CYAN)
             
             # Stream output until process completes
             output_lines = []
@@ -1051,9 +1060,9 @@ def execute_command(command, is_async=False):
                             line = fd.readline()
                             if line:
                                 error_lines.append(line)
-                                print(f"{MS_RED}{line}{MS_RESET}", end="", flush=True)
+                                print_colored(line, MS_RED, end="", flush=True)
             except KeyboardInterrupt:
-                print(f"\n{MS_YELLOW}Command interrupted by user.{MS_RESET}")
+                print_colored("\nCommand interrupted by user.", MS_YELLOW)
                 try:
                     process.terminate()
                     return None
@@ -1089,15 +1098,15 @@ def execute_command(command, is_async=False):
             }
             
             if return_code != 0:
-                print(f"\n{MS_RED}Command completed with return code {return_code}.{MS_RESET}")
+                print_colored(f"Command completed with return code {return_code}.", MS_RED)
                 if error:
-                    print(f"{MS_RED}Error output: {error.strip()}{MS_RESET}")
+                    print_colored(f"Error output: {error.strip()}", MS_RED)
             else:
-                print(f"\n{MS_GREEN}Command completed in {execution_time:.2f} seconds.{MS_RESET}")
+                print_colored(f"Command completed in {execution_time:.2f} seconds.", MS_GREEN)
                
             # Ask if user wants to clear the console
             if output or error:
-                clear_choice = input(f"{MS_YELLOW}Clear console? (y/n): {MS_RESET}")
+                clear_choice = print_input_prompt("Clear console? (y/n): ", MS_YELLOW)
                 if clear_choice.lower() == 'y':
                     os.system("cls" if os.name == "nt" else "clear") 
                 
@@ -1130,28 +1139,28 @@ def execute_command(command, is_async=False):
             
             # Check for errors
             if result.returncode != 0:
-                print(f"{MS_RED}Command completed with return code {result.returncode}.{MS_RESET}")
+                print_colored(f"Command completed with return code {result.returncode}.", MS_RED)
                 if result.stderr:
-                    print(f"{MS_RED}Error output: {result.stderr.strip()}{MS_RESET}")
+                    print_colored(f"Error output: {result.stderr.strip()}", MS_RED)
                     
             # Print output
             if result.stdout:
-                print(f"{MS_CYAN}Output:{MS_RESET}")
+                print_colored("Output:", MS_CYAN)
                 print(result.stdout)
                 
             if result.returncode == 0:
-                print(f"{MS_GREEN}Command completed in {execution_time:.2f} seconds.{MS_RESET}")
+                print_colored(f"Command completed in {execution_time:.2f} seconds.", MS_GREEN)
             
             # Ask if user wants to clear the console
             if result.stdout or result.stderr:
-                clear_choice = input(f"{MS_YELLOW}Clear console? (y/n): {MS_RESET}")
+                clear_choice = print_input_prompt("Clear console? (y/n): ", MS_YELLOW)
                 if clear_choice.lower() == 'y':
                     os.system("cls" if os.name == "nt" else "clear")
                 
             return result_dict
     
     except KeyboardInterrupt:
-        print(f"{MS_YELLOW}Command interrupted by user.{MS_RESET}")
+        print_colored("\nCommand interrupted by user.", MS_YELLOW)
         return None
     except Exception as e:
         if isinstance(e, TerminalAIError):
@@ -1232,7 +1241,7 @@ def run_setup_wizard():
     else:
         print_colored("\nStep 1: API Key Configuration", MS_CYAN)
         print_colored("API key already configured.", MS_GREEN)
-        change = input(f"{MS_YELLOW}Do you want to change it? (y/n):{MS_RESET} ").lower()
+        change = print_input_prompt("Do you want to change it? (y/n): ", MS_YELLOW).lower()
         if change == 'y':
             set_api_key()
     
@@ -1240,7 +1249,7 @@ def run_setup_wizard():
     print_colored("\nStep 2: Model Selection", MS_CYAN)
     print_colored(f"Current model: {MODEL}", MS_YELLOW)
     print_colored("Available models: gemini-1.5-flash, gemini-1.5-pro", MS_YELLOW)
-    new_model = input(f"{MS_YELLOW}Select model (or press Enter to keep current):{MS_RESET} ").strip()
+    new_model = print_input_prompt("Select model (or press Enter to keep current): ", MS_YELLOW).strip()
     if new_model:
         MODEL = new_model
         print_colored(f"Model set to: {MODEL}", MS_GREEN)
@@ -1249,7 +1258,7 @@ def run_setup_wizard():
     print_colored("\nStep 3: Command Verification", MS_CYAN)
     print_colored("Command verification checks if commands are safe before execution.", MS_YELLOW)
     print_colored(f"Current setting: {'Enabled' if VERIFY_COMMANDS else 'Disabled'}", MS_YELLOW)
-    verify = input(f"{MS_YELLOW}Enable command verification? (y/n):{MS_RESET} ").lower()
+    verify = print_input_prompt("Enable command verification? (y/n): ", MS_YELLOW).lower()
     if verify:
         VERIFY_COMMANDS = verify == 'y'
         print_colored(f"Command verification: {'Enabled' if VERIFY_COMMANDS else 'Disabled'}", MS_GREEN)
@@ -1258,7 +1267,7 @@ def run_setup_wizard():
     print_colored("\nStep 4: Output Streaming", MS_CYAN)
     print_colored("Output streaming shows command output in real-time.", MS_YELLOW)
     print_colored(f"Current setting: {'Enabled' if STREAM_OUTPUT else 'Disabled'}", MS_YELLOW)
-    stream = input(f"{MS_YELLOW}Enable output streaming? (y/n):{MS_RESET} ").lower()
+    stream = print_input_prompt("Enable output streaming? (y/n): ", MS_YELLOW).lower()
     if stream:
         STREAM_OUTPUT = stream == 'y'
         print_colored(f"Output streaming: {'Enabled' if STREAM_OUTPUT else 'Disabled'}", MS_GREEN)
@@ -1267,7 +1276,7 @@ def run_setup_wizard():
     print_colored("\nStep 5: Auto-Clear Terminal", MS_CYAN)
     print_colored("Auto-clear automatically clears the terminal after each command.", MS_YELLOW)
     print_colored(f"Current setting: {'Enabled' if AUTO_CLEAR else 'Disabled'}", MS_YELLOW)
-    auto_clear = input(f"{MS_YELLOW}Enable auto-clear terminal? (y/n):{MS_RESET} ").lower()
+    auto_clear = print_input_prompt("Enable auto-clear terminal? (y/n): ", MS_YELLOW).lower()
     if auto_clear:
         AUTO_CLEAR = auto_clear == 'y'
         print_colored(f"Auto-clear terminal: {'Enabled' if AUTO_CLEAR else 'Disabled'}", MS_GREEN)
@@ -1691,6 +1700,21 @@ def kill_job(job_id):
     except Exception as e:
         print_colored(f"Error terminating job {job_id}: {e}", MS_RED)
 
+def print_input_prompt(prompt_text, color=MS_YELLOW):
+    """Print an input prompt with proper coloring and return the user input"""
+    if RICH_AVAILABLE:
+        # Using Rich console to print the prompt
+        console.print(prompt_text, style=color, end="")
+        return input()
+    elif COLORS_SUPPORTED:
+        # Using colorama with direct printing
+        sys.stdout.write(f"{color}{prompt_text}{MS_RESET}")
+        sys.stdout.flush()
+        return input()
+    else:
+        # Fallback for environments without color support
+        return input(prompt_text)
+
 def main():
     """Main function to run the terminal assistant"""
     # Check dependencies
@@ -1730,7 +1754,7 @@ def main():
                 session = PromptSession(history=FileHistory(HISTORY_FILE))
                 user_input = session.prompt("What would you like me to do? ")
             else:
-                user_input = input("What would you like me to do? ")
+                user_input = print_input_prompt("What would you like me to do? ", MS_CYAN)
                 
             # Skip empty inputs
             if not user_input.strip():
@@ -1774,8 +1798,37 @@ def main():
                             if "I cannot " in line or "cannot be " in line or "Sorry, " in line:
                                 print_colored(f"AI Response: {line}", MS_YELLOW)
                             else:
-                                execute_command(line)
-                                command_executed = True
+                                try:
+                                    result = execute_command(line)
+                                    command_executed = True  # Mark that a command was executed
+                                    # Only attempt error recovery if there's a clear error with a non-zero return code
+                                    if isinstance(result, dict) and result.get("return_code", 0) != 0 and result.get("error"):
+                                        error_text = result.get("error", "").strip()
+                                        # Don't attempt recovery for empty errors or warnings
+                                        if error_text and "warning:" not in error_text.lower():
+                                            print_colored("Error detected, attempting recovery...", MS_YELLOW)
+                                            error_feedback_prompt = f"""
+                                            The previous command '{line}' failed with error:
+                                            {error_text}
+                                            
+                                            Please suggest a correct solution for this error or an alternative approach.
+                                            Respond ONLY with the exact command to fix the issue, or start with "I cannot fix this:" to abort recovery.
+                                            """
+                                            
+                                            error_solution = get_ai_response(error_feedback_prompt)
+                                            
+                                            # Only try the solution if we got a valid command
+                                            if error_solution and not any(phrase in error_solution.lower() for phrase in ["i cannot", "cannot be", "sorry,", "unable to"]):
+                                                print_colored("Attempting solution:", MS_CYAN)
+                                                try:
+                                                    # Execute the solution but don't do any further recovery to prevent loops
+                                                    execute_command(error_solution.strip())
+                                                except Exception as e:
+                                                    print_colored(f"Recovery attempt failed: {e}", MS_RED)
+                                            else:
+                                                print_colored(f"AI response: {error_solution}", MS_YELLOW)
+                                except Exception as e:
+                                    print_colored(format_error(e), MS_RED)
                 
                 # If auto-clear is enabled and no command was executed, handle it here
                 if AUTO_CLEAR and not command_executed:
