@@ -334,8 +334,6 @@ def is_dangerous_command(command):
 
 def verify_command(command):
     """Verify if a command is safe to execute"""
-    global API_KEY, MODEL, VERIFY_COMMANDS, API_ENDPOINT, API_VERSION
-    
     # Skip verification if disabled
     if not VERIFY_COMMANDS:
         return True, ""
@@ -449,8 +447,6 @@ def verify_command(command):
 
 def get_ai_response(task):
     """Get AI response for a given task"""
-    global API_KEY, MODEL, API_ENDPOINT, API_VERSION
-    
     if not API_KEY:
         print(f"{MS_RED}Error: No API key found. Please set your API key first.{MS_RESET}")
         return None
@@ -704,8 +700,6 @@ def execute_command(command, is_async=False):
 
 def process_user_command(command):
     """Process a built-in command or pass to shell"""
-    global API_KEY, VERIFY_COMMANDS, ALLOW_COMMAND_CHAINING, MODEL
-    
     if not command or command.isspace():
         return
         
@@ -1062,8 +1056,6 @@ def set_api_key():
 
 def manage_templates():
     """Manage command templates"""
-    global templates
-    
     print(f"{MS_CYAN}Command Templates:{MS_RESET}")
     print(f"{'Name':<15} {'Description':<50}")
     print("-" * 65)
@@ -1132,8 +1124,6 @@ def run_template(template_name):
             
 def manage_command_groups():
     """Manage command groups"""
-    global command_groups
-    
     print(f"{MS_CYAN}Command Groups:{MS_RESET}")
     
     for group, commands in command_groups.items():
@@ -1192,7 +1182,7 @@ def manage_command_groups():
 
 def run_setup_wizard():
     """Run setup wizard for first-time configuration"""
-    global API_KEY, MODEL, VERIFY_COMMANDS, STREAM_OUTPUT
+    global MODEL, VERIFY_COMMANDS, STREAM_OUTPUT
     
     print(f"{MS_CYAN}Terminal AI Assistant Setup Wizard{MS_RESET}")
     print(f"{MS_YELLOW}This wizard will help you configure the assistant.{MS_RESET}")
@@ -1254,7 +1244,6 @@ def main():
         load_token_cache()
     
     # Check for API key
-    global API_KEY
     if not API_KEY:
         print_styled("No API key found. Please enter your Gemini API key.", style="yellow")
         set_api_key()
