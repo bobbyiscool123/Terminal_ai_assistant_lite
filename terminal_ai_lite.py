@@ -23,7 +23,7 @@ except ImportError:
     RICH_AVAILABLE = False
     from colorama import init, Fore, Style
     # Initialize colorama with compatibility settings
-    init(strip=False, convert=True, autoreset=True)
+    init(autoreset=False)
 
 try:
     from prompt_toolkit import PromptSession
@@ -66,17 +66,143 @@ if RICH_AVAILABLE:
     MS_BRIGHT = "bold "
     MS_DIM = "dim "
 else:
-    # Use colorama directly
-    MS_BLUE = Fore.BLUE
-    MS_CYAN = Fore.CYAN
-    MS_GREEN = Fore.GREEN
-    MS_YELLOW = Fore.YELLOW
-    MS_RED = Fore.RED
-    MS_MAGENTA = Fore.MAGENTA
-    MS_WHITE = Fore.WHITE
-    MS_RESET = Style.RESET_ALL
-    MS_BRIGHT = Style.BRIGHT
-    MS_DIM = Style.DIM
+    # Try to detect if terminal supports colors
+    import os
+    COLORS_SUPPORTED = os.environ.get('TERM') is not None
+    
+    # Use colorama directly if colors are supported
+    if COLORS_SUPPORTED:
+        MS_BLUE = Fore.BLUE
+        MS_CYAN = Fore.CYAN
+        MS_GREEN = Fore.GREEN
+        MS_YELLOW = Fore.YELLOW
+        MS_RED = Fore.RED
+        MS_MAGENTA = Fore.MAGENTA
+        MS_WHITE = Fore.WHITE
+        MS_RESET = Style.RESET_ALL
+        MS_BRIGHT = Style.BRIGHT
+        MS_DIM = Style.DIM
+    else:
+        # Define empty color codes if colors are not supported
+        MS_BLUE = ""
+        MS_CYAN = ""
+        MS_GREEN = ""
+        MS_YELLOW = ""
+        MS_RED = ""
+        MS_MAGENTA = ""
+        MS_WHITE = ""
+        MS_RESET = ""
+        MS_BRIGHT = ""
+        MS_DIM = ""
+
+# Register color names to make them easier to match in safe_print
+COLOR_NAMES = {
+    "MS_BLUE": MS_BLUE,
+    "MS_CYAN": MS_CYAN,
+    "MS_GREEN": MS_GREEN, 
+    "MS_YELLOW": MS_YELLOW,
+    "MS_RED": MS_RED,
+    "MS_MAGENTA": MS_MAGENTA,
+    "MS_WHITE": MS_WHITE,
+    "MS_RESET": MS_RESET,
+    "MS_BRIGHT": MS_BRIGHT,
+    "MS_DIM": MS_DIM
+}
+
+# Helper function to safely print colored text
+def print_colored(text, color_code=None, end="\n", flush=False):
+    """Safely print colored text, falling back to plain text if colors aren't supported
+    
+    Args:
+        text: Text to print
+        color_code: Color code to use (MS_CYAN, MS_GREEN, etc.) or None for plain text
+        end: String appended after the last value, default a newline
+        flush: Whether to forcibly flush the stream
+    """
+    if RICH_AVAILABLE:
+        # Convert MS_* color codes to rich style names
+        style = None
+        if color_code == MS_CYAN:
+            style = "cyan"
+        elif color_code == MS_GREEN:
+            style = "green"
+        elif color_code == MS_YELLOW:
+            style = "yellow"
+        elif color_code == MS_RED:
+            style = "red"
+        elif color_code == MS_BLUE:
+            style = "blue"
+        elif color_code == MS_MAGENTA:
+            style = "magenta"
+        elif color_code == MS_WHITE:
+            style = "white"
+            
+        console.print(text, style=style, end=end)
+    elif not RICH_AVAILABLE and COLORS_SUPPORTED:
+        # Use colorama
+        if color_code:
+            print(f"{color_code}{text}{MS_RESET}", end=end, flush=flush)
+        else:
+            print(text, end=end, flush=flush)
+    else:
+        # No color support, just print plain text
+        # Clean up any potential color name prefixes from the text
+        color_names = ["cyan", "green", "yellow", "red", "blue", "magenta", "white"]
+        for color_name in color_names:
+            if text.lower().startswith(color_name):
+                text = text[len(color_name):]
+                break
+        print(text, end=end, flush=flush)
+
+# Override the print function to handle color codes
+import builtins
+original_print = builtins.print
+
+def safe_print(*args, **kwargs):
+    """Drop-in replacement for print that handles color-formatted strings"""
+    # Check if we have a single string argument that might contain color codes
+    if len(args) == 1 and isinstance(args[0], str):
+        text = args[0]
+        
+        # Common pattern: "{MS_COLOR}Text{MS_RESET}"
+        if text.startswith("{MS_"):
+            # Find color code
+            color_end = text.find("}")
+            if color_end > 0:
+                color_var = text[1:color_end]  # Extract "MS_COLOR"
+                
+                # Extract the content between the color and reset
+                content_start = color_end + 1
+                reset_start = text.find("{MS_RESET}")
+                
+                if reset_start > content_start:
+                    # We have a proper "{MS_COLOR}Text{MS_RESET}" pattern
+                    content = text[content_start:reset_start]
+                else:
+                    # Just content with color: "{MS_COLOR}Text"
+                    content = text[content_start:]
+                
+                # Get the actual color code value
+                if color_var in COLOR_NAMES:
+                    color_code = COLOR_NAMES[color_var]
+                    print_colored(content, color_code, **kwargs)
+                    return
+    
+    # Handle cases with literal color label prefixes (e.g. "cyanExecuting:")
+    if len(args) == 1 and isinstance(args[0], str):
+        text = args[0]
+        for color_name in ["cyan", "green", "yellow", "red", "blue", "magenta", "white"]:
+            if text.lower().startswith(color_name):
+                clean_text = text[len(color_name):]
+                color_code = COLOR_NAMES.get(f"MS_{color_name.upper()}", "")
+                print_colored(clean_text, color_code, **kwargs)
+                return
+    
+    # Fall back to original print for all other cases
+    original_print(*args, **kwargs)
+
+# Replace the built-in print with our version
+builtins.print = safe_print
 
 # Helper function for styled printing
 def print_styled(text, style=None):
@@ -98,7 +224,7 @@ def print_styled(text, style=None):
         }
         
         # Apply styling based on rich style name
-        if style in style_map:
+        if style in style_map and COLORS_SUPPORTED:
             print(f"{style_map[style]}{text}{MS_RESET}")
         else:
             print(text)
@@ -571,7 +697,7 @@ def execute_command(command, is_async=False):
     # Record start time
     start_time = time.time()
     
-    print(f"{MS_CYAN}Executing: {command}{MS_RESET}")
+    print_colored(f"Executing: {command}", MS_CYAN)
     
     # Execute the command
     try:
@@ -662,7 +788,7 @@ def execute_command(command, is_async=False):
             
             # Record in history
             timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            print(f"{MS_GREEN}Command completed in {execution_time:.2f} seconds.{MS_RESET}")
+            print_colored(f"Command completed in {execution_time:.2f} seconds.", MS_GREEN)
             
             return output
             
@@ -687,7 +813,7 @@ def execute_command(command, is_async=False):
             execution_time = end_time - start_time
             
             # Display execution time
-            print(f"{MS_GREEN}Command completed in {execution_time:.2f} seconds.{MS_RESET}")
+            print_colored(f"Command completed in {execution_time:.2f} seconds.", MS_GREEN)
             
             return result.stdout
             
