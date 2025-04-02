@@ -910,8 +910,8 @@ def kill_background_job(job_id):
 
 def show_help():
     """Display help information"""
-    print(f"{MS_CYAN}Terminal AI Assistant Lite - Help{MS_RESET}")
-    print(f"\n{MS_YELLOW}General Commands:{MS_RESET}")
+    print_styled("Terminal AI Assistant Lite - Help", style="cyan")
+    print_styled("\nGeneral Commands:", style="yellow")
     print("  help       - Show this help information")
     print("  exit/quit  - Exit the program")
     print("  clear      - Clear the screen")
@@ -919,16 +919,16 @@ def show_help():
     print("  config     - Show current configuration")
     print("  set KEY=VAL- Change configuration settings")
     
-    print(f"\n{MS_YELLOW}Navigation:{MS_RESET}")
+    print_styled("\nNavigation:", style="yellow")
     print("  cd DIR     - Change directory")
     print("  pwd        - Show current directory")
     
-    print(f"\n{MS_YELLOW}API & Configuration:{MS_RESET}")
+    print_styled("\nAPI & Configuration:", style="yellow")
     print("  api-key    - Update your Gemini API key")
     print("  templates  - Manage command templates")
     print("  groups     - Manage command groups")
     
-    print(f"\n{MS_YELLOW}Execution Control:{MS_RESET}")
+    print_styled("\nExecution Control:", style="yellow")
     print("  format     - Format last command output")
     print("  copy       - Copy last command output to clipboard")
     print("  async      - Run command in background")
@@ -939,13 +939,13 @@ def show_help():
     print("  chain      - Toggle command chaining")
     print("  setup      - Run setup wizard")
     
-    print(f"\n{MS_YELLOW}Examples:{MS_RESET}")
+    print_styled("\nExamples:", style="yellow")
     print("  Find all text files: find . -name \"*.txt\"")
     print("  Check disk space: df -h")
     print("  Format JSON output: cat data.json | format json")
     print("  Run in background: async long-running-command")
     
-    print(f"\n{MS_GREEN}For AI assistance, simply type your task in natural language.{MS_RESET}")
+    print_styled("\nFor AI assistance, simply type your task in natural language.", style="green")
 
 def show_history():
     """Display command history"""
