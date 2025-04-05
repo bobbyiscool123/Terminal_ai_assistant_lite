@@ -1,0 +1,19 @@
+{
+    "gemini_api": {
+        "api_key": "",
+        "model": "gemini-2.0-flash",
+        "max_retry_attempts": 5,
+        "max_output_length": 1000
+    },
+    "terminal": {
+        "verify_commands": true,
+        "allow_command_chaining": true,
+        "stream_output": true,
+        "auto_clear": false
+    },
+    "cache": {
+        "use_token_cache": true,
+        "cache_expiry_hours": 24,
+        "max_cache_size": 100
+    }
+}
