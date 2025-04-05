@@ -320,7 +320,7 @@ COMMAND_GROUPS_FILE = os.path.expanduser("~/.terminal_ai_lite_command_groups")
 MAX_HISTORY = 100
 CONFIRM_DANGEROUS = True
 STREAM_OUTPUT = True
-MODEL = "gemini-1.5-flash"
+MODEL = "gemini-2.0-flash"
 API_ENDPOINT = "https://generativelanguage.googleapis.com"
 API_VERSION = "v1"
 EXPLAIN_COMMANDS = False
@@ -350,13 +350,24 @@ def load_config():
     global USE_TOKEN_CACHE, CACHE_EXPIRY, MAX_CACHE_SIZE
     
     try:
+        # First check environment variable
+        if not API_KEY:
+            env_key = os.environ.get("GEMINI_API_KEY")
+            if env_key and env_key.strip():
+                API_KEY = env_key.strip()
+        
+        # Try loading from config file
         if os.path.exists(CONFIG_PATH):
             with open(CONFIG_PATH, 'r') as f:
                 config = json.load(f)
                 
             # Load Gemini API settings
             gemini_config = config.get('gemini_api', {})
-            API_KEY = gemini_config.get('api_key', API_KEY)
+            
+            # Only update API_KEY if we don't already have one and there's a valid one in config
+            if not API_KEY and gemini_config.get('api_key'):
+                API_KEY = gemini_config.get('api_key')
+            
             MODEL = gemini_config.get('model', MODEL)
             MAX_RETRY_ATTEMPTS = gemini_config.get('max_retry_attempts', MAX_RETRY_ATTEMPTS)
             MAX_OUTPUT_LENGTH = gemini_config.get('max_output_length', MAX_OUTPUT_LENGTH)
@@ -378,6 +389,30 @@ def load_config():
         else:
             # Create default config file
             save_config()
+        
+        # If still no API key, try loading from a dedicated key file
+        if not API_KEY:
+            api_key_file = os.path.expanduser("~/.terminal_ai_lite_api_key")
+            if os.path.exists(api_key_file):
+                try:
+                    with open(api_key_file, 'r') as f:
+                        loaded_key = f.read().strip()
+                        if loaded_key:
+                            API_KEY = loaded_key
+                except Exception:
+                    pass
+                    
+        # If still no API key, try loading from .env file
+        if not API_KEY and os.path.exists(".env"):
+            try:
+                with open(".env", 'r') as f:
+                    env_content = f.read()
+                    match = re.search(r'GEMINI_API_KEY=([^\s]+)', env_content)
+                    if match:
+                        API_KEY = match.group(1).strip()
+            except Exception:
+                pass
+                
     except Exception as e:
         print_colored(f"Error loading configuration: {str(e)}", MS_RED)
         print_colored("Using default settings...", MS_YELLOW)
@@ -691,28 +726,30 @@ def set_api_key():
     """Set the Gemini API key"""
     global API_KEY
     
-    print_colored("\nYour Gemini API key is used to access Google's AI models.", MS_CYAN)
-    print_colored("If you don't have one, visit https://ai.google.dev/ to get your key.", MS_YELLOW)
-    print_colored("The API key will be stored locally for future use.", MS_YELLOW)
-    
     # Check for existing key file
     api_key_file = os.path.expanduser("~/.terminal_ai_lite_api_key")
+    current_key = None
     
     if os.path.exists(api_key_file):
-        print_colored("An API key file already exists.", MS_GREEN)
-        show = print_input_prompt("Show current key? (y/n): ", MS_YELLOW).lower()
-        
-        if show == 'y':
-            try:
-                with open(api_key_file, 'r') as f:
-                    current_key = f.read().strip()
-                    masked_key = current_key[:4] + "*" * (len(current_key) - 8) + current_key[-4:]
-                    print_colored(f"Current API key: {masked_key}", MS_CYAN)
-            except Exception as e:
-                print_colored(f"Error reading API key: {e}", MS_RED)
+        try:
+            with open(api_key_file, 'r') as f:
+                current_key = f.read().strip()
+        except Exception:
+            pass
     
-    # Ask for new key
-    new_key = print_input_prompt("Enter your Gemini API key (or press Enter to keep current): ", MS_YELLOW).strip()
+    # Only show key management message if we don't have a key
+    if not API_KEY and not current_key:
+        print_colored("\nYour Gemini API key is used to access Google's AI models.", MS_CYAN)
+        print_colored("If you don't have one, visit https://ai.google.dev/ to get your key.", MS_YELLOW)
+    
+    # If we have a current key, just show minimal UI
+    if current_key:
+        masked_key = current_key[:4] + "*" * (len(current_key) - 8) + current_key[-4:] if len(current_key) > 8 else "*****"
+        print_colored(f"Current API key: {masked_key}", MS_CYAN)
+    
+    # Ask for new key with appropriate prompt
+    prompt_text = "Enter your Gemini API key: " if not current_key else "Enter new API key (or press Enter to keep current): "
+    new_key = print_input_prompt(prompt_text, MS_YELLOW).strip()
     
     if new_key:
         # Save to environment and file
@@ -720,9 +757,22 @@ def set_api_key():
         API_KEY = new_key
         
         try:
+            # Save to dedicated key file
             with open(api_key_file, 'w') as f:
                 f.write(new_key)
-            print_colored("API key saved successfully.", MS_GREEN)
+            
+            # Also update config.json
+            if os.path.exists(CONFIG_PATH):
+                with open(CONFIG_PATH, 'r') as f:
+                    config = json.load(f)
+                
+                if 'gemini_api' not in config:
+                    config['gemini_api'] = {}
+                
+                config['gemini_api']['api_key'] = new_key
+                
+                with open(CONFIG_PATH, 'w') as f:
+                    json.dump(config, f, indent=4)
             
             # Also update .env file if it exists
             if os.path.exists(".env"):
@@ -738,64 +788,68 @@ def set_api_key():
                 
                 with open(".env", 'w') as f:
                     f.write(env_content)
+            
+            print_colored("API key saved successfully.", MS_GREEN)
+            
+            # Test the new key
+            print_colored("Testing API key... Please wait.", MS_YELLOW)
+            test_key(new_key)
                 
         except Exception as e:
             print_colored(f"Error saving API key: {e}", MS_RED)
-            print_colored("Setting key for current session only.", MS_YELLOW)
+            print_colored("API key set for current session only.", MS_YELLOW)
+    elif not API_KEY and current_key:
+        # Use stored key if no new key provided
+        API_KEY = current_key
+        print_colored("Using stored API key.", MS_GREEN)
     elif not API_KEY:
-        # Try to load from file if no key provided and none in environment
-        try:
-            with open(api_key_file, 'r') as f:
-                API_KEY = f.read().strip()
-                if API_KEY:
-                    print_colored("Using previously stored API key.", MS_GREEN)
-        except Exception:
-            pass
-    
-    # Test the API key
-    if API_KEY:
-        print_colored("Testing API key...", MS_YELLOW)
-        test_prompt = "Respond with 'API key is working' if you can read this message."
-        
-        try:
-            curl_command = [
-                "curl", "-s", "-X", "POST",
-                f"{API_ENDPOINT}/{API_VERSION}/models/{MODEL}:generateContent?key={API_KEY}",
-                "-H", "Content-Type: application/json",
-                "-d", json.dumps({
-                    "contents": [{
-                        "parts": [{
-                            "text": test_prompt
-                        }]
-                    }],
-                    "generationConfig": {
-                        "temperature": 0.1,
-                        "maxOutputTokens": 20
-                    }
-                })
-            ]
-            
-            result = subprocess.run(curl_command, capture_output=True, text=True)
-            response = result.stdout
-            
-            if "API key is working" in response or "working" in response.lower():
-                print_colored("API key verified successfully!", MS_GREEN)
-            else:
-                # Try to parse response to check for errors
-                try:
-                    response_data = json.loads(response)
-                    if "error" in response_data:
-                        error_message = response_data["error"].get("message", "Unknown error")
-                        print_colored(f"API Error: {error_message}", MS_RED)
-                    else:
-                        print_colored("API key may be valid, but received unexpected response.", MS_YELLOW)
-                except:
-                    print_colored("API key may be invalid or the service might be unavailable.", MS_RED)
-                    print_colored(f"Raw response: {response}", MS_YELLOW)
-        except Exception as e:
-            print_colored(f"Error testing API key: {e}", MS_RED)
+        print_colored("No API key provided. Some features will be disabled.", MS_RED)
     
     return API_KEY
+
+def test_key(key):
+    """Test if an API key is valid"""
+    test_prompt = "Respond with 'API key is working' if you can read this message."
+    
+    try:
+        curl_command = [
+            "curl", "-s", "-X", "POST",
+            f"{API_ENDPOINT}/{API_VERSION}/models/{MODEL}:generateContent?key={key}",
+            "-H", "Content-Type: application/json",
+            "-d", json.dumps({
+                "contents": [{
+                    "parts": [{
+                        "text": test_prompt
+                    }]
+                }],
+                "generationConfig": {
+                    "temperature": 0.1,
+                    "maxOutputTokens": 20
+                }
+            })
+        ]
+        
+        result = subprocess.run(curl_command, capture_output=True, text=True)
+        response = result.stdout
+        
+        if "API key is working" in response or "working" in response.lower():
+            print_colored("API key verified successfully!", MS_GREEN)
+            return True
+        else:
+            # Try to parse response to check for errors
+            try:
+                response_data = json.loads(response)
+                if "error" in response_data:
+                    error_message = response_data["error"].get("message", "Unknown error")
+                    print_colored(f"API Error: {error_message}", MS_RED)
+                else:
+                    print_colored("API key may be valid, but received unexpected response.", MS_YELLOW)
+            except:
+                print_colored("API key may be invalid or the service might be unavailable.", MS_RED)
+            return False
+    except Exception as e:
+        print_colored(f"Error testing API key: {e}", MS_RED)
+        return False
 
 def verify_command(command):
     """Verify if a command is safe to execute"""
@@ -953,9 +1007,8 @@ def get_ai_response(prompt):
     """Get a response from the Gemini API."""
     
     if not API_KEY:
-        print_colored("Error: API key not set. Use the 'setkey' command to set your key.", MS_RED)
-        return None
-        
+        return "Error: API key not set. Use the 'api-key' command to set your Gemini API key."
+    
     # Create the payload for the Gemini API
     payload = {
         "contents": [
@@ -982,7 +1035,7 @@ def get_ai_response(prompt):
         try:
             # Send the request to the Gemini API
             response = requests.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent?key={API_KEY}",
+                f"https://generativelanguage.googleapis.com/v1/models/{MODEL}:generateContent?key={API_KEY}",
                 json=payload,
                 timeout=30
             )
@@ -1081,7 +1134,7 @@ async def run_command_async(command_id, command):
         background_processes[command_id] = {
             "process": process,
             "command": command,
-            "start_time": datetime.datetime.now(),
+            "start_time": datetime.now(),
             "status": "running"
         }
         
@@ -1093,7 +1146,7 @@ async def run_command_async(command_id, command):
         else:
             background_processes[command_id]["status"] = "failed"
             
-        background_processes[command_id]["end_time"] = datetime.datetime.now()
+        background_processes[command_id]["end_time"] = datetime.now()
         background_processes[command_id]["return_code"] = process.returncode
         background_processes[command_id]["stdout"] = stdout.decode()
         background_processes[command_id]["stderr"] = stderr.decode()
@@ -1405,7 +1458,7 @@ def run_setup_wizard():
     # Configure model
     print_colored("\nStep 2: Model Selection", MS_CYAN)
     print_colored(f"Current model: {MODEL}", MS_YELLOW)
-    print_colored("Available models: gemini-1.5-flash, gemini-1.5-pro", MS_YELLOW)
+    print_colored("Available models: gemini-2.0-flash, gemini-1.5-flash, gemini-1.5-pro, gemini-pro", MS_YELLOW)
     new_model = print_input_prompt("Select model (or press Enter to keep current): ", MS_YELLOW).strip()
     if new_model:
         MODEL = new_model
@@ -1774,7 +1827,7 @@ def set_config(config_str):
     value = value.strip()
     
     if key == "model":
-        valid_models = ["gemini-1.5-flash", "gemini-1.5-pro"]
+        valid_models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]
         if value in valid_models:
             MODEL = value
             print_colored(f"Model set to: {MODEL}", MS_GREEN)
@@ -1929,7 +1982,7 @@ def show_jobs():
     print(f"{'ID':<10} {'Status':<10} {'Runtime':<15} {'Command':<30}")
     print("-" * 65)
     
-    current_time = datetime.datetime.now()
+    current_time = datetime.now()
     
     for job_id, job_info in background_processes.items():
         status = job_info["status"]
@@ -1942,7 +1995,7 @@ def show_jobs():
         elif "end_time" in job_info:
             runtime = job_info["end_time"] - start_time
         else:
-            runtime = datetime.timedelta(0)
+            runtime = timedelta(0)
             
         # Format runtime as minutes:seconds
         minutes, seconds = divmod(int(runtime.total_seconds()), 60)
@@ -1985,7 +2038,7 @@ def kill_job(job_id):
         
         # Update job status
         job_info["status"] = "terminated"
-        job_info["end_time"] = datetime.datetime.now()
+        job_info["end_time"] = datetime.now()
     except Exception as e:
         print_colored(f"Error terminating job {job_id}: {e}", MS_RED)
 
@@ -2023,13 +2076,18 @@ def main():
         print_styled("Setting up command auto-completion...", style="cyan")
         setup_autocomplete()
     
-    # Check for API key
+    # Check for API key silently - it should already be loaded from config if available
     if not API_KEY:
-        print_colored("No API key found. Please enter your Gemini API key.", MS_YELLOW)
-        set_api_key()
-        
-        if not API_KEY:
-            print_colored("No API key provided. Some features will be disabled.", MS_RED)
+        # Try to load from various sources without prompting
+        api_key_file = os.path.expanduser("~/.terminal_ai_lite_api_key")
+        if os.path.exists(api_key_file):
+            try:
+                with open(api_key_file, 'r') as f:
+                    key = f.read().strip()
+                    if key:
+                        globals()['API_KEY'] = key
+            except Exception:
+                pass
     
     # Display welcome message
     print_colored("Terminal AI Assistant Lite v1.0", MS_CYAN)
