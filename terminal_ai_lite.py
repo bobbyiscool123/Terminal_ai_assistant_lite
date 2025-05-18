@@ -54,7 +54,7 @@ if RICH_AVAILABLE:
     # Define functions to emulate colorama with rich
     def ms_print(text, style=None):
         console.print(text, style=style)
-        
+
     MS_BLUE = "blue"
     MS_CYAN = "cyan"
     MS_GREEN = "green"
@@ -69,7 +69,7 @@ else:
     # Try to detect if terminal supports colors
     import os
     COLORS_SUPPORTED = os.environ.get('TERM') is not None
-    
+
     # Use colorama directly if colors are supported
     if COLORS_SUPPORTED:
         MS_BLUE = Fore.BLUE
@@ -99,7 +99,7 @@ else:
 COLOR_NAMES = {
     "MS_BLUE": MS_BLUE,
     "MS_CYAN": MS_CYAN,
-    "MS_GREEN": MS_GREEN, 
+    "MS_GREEN": MS_GREEN,
     "MS_YELLOW": MS_YELLOW,
     "MS_RED": MS_RED,
     "MS_MAGENTA": MS_MAGENTA,
@@ -112,7 +112,7 @@ COLOR_NAMES = {
 # Helper function to safely print colored text
 def print_colored(text, color_code=None, end="\n", flush=False):
     """Safely print colored text, falling back to plain text if colors aren't supported
-    
+
     Args:
         text: Text to print
         color_code: Color code to use (MS_CYAN, MS_GREEN, etc.) or None for plain text
@@ -136,7 +136,7 @@ def print_colored(text, color_code=None, end="\n", flush=False):
             style = "magenta"
         elif color_code == MS_WHITE:
             style = "white"
-            
+
         console.print(text, style=style, end=end)
     elif not RICH_AVAILABLE and COLORS_SUPPORTED:
         # Use colorama
@@ -163,41 +163,40 @@ def safe_print(*args, **kwargs):
     # Check if we have a single string argument that might contain color codes
     if len(args) == 1 and isinstance(args[0], str):
         text = args[0]
-        
+
         # Common pattern: "{MS_COLOR}Text{MS_RESET}"
         if text.startswith("{MS_"):
             # Find color code
             color_end = text.find("}")
             if color_end > 0:
                 color_var = text[1:color_end]  # Extract "MS_COLOR"
-                
+
                 # Extract the content between the color and reset
                 content_start = color_end + 1
                 reset_start = text.find("{MS_RESET}")
-                
+
                 if reset_start > content_start:
                     # We have a proper "{MS_COLOR}Text{MS_RESET}" pattern
                     content = text[content_start:reset_start]
                 else:
                     # Just content with color: "{MS_COLOR}Text"
                     content = text[content_start:]
-                
+
                 # Get the actual color code value
                 if color_var in COLOR_NAMES:
                     color_code = COLOR_NAMES[color_var]
                     print_colored(content, color_code, **kwargs)
                     return
-    
-    # Handle cases with literal color label prefixes (e.g. "cyanExecuting:")
-    if len(args) == 1 and isinstance(args[0], str):
-        text = args[0]
+
+        # More efficient check for color name prefixes using str.startswith()
+        text_lower = text.lower()
         for color_name in ["cyan", "green", "yellow", "red", "blue", "magenta", "white"]:
-            if text.lower().startswith(color_name):
+            if text_lower.startswith(color_name):
                 clean_text = text[len(color_name):]
                 color_code = COLOR_NAMES.get(f"MS_{color_name.upper()}", "")
                 print_colored(clean_text, color_code, **kwargs)
                 return
-    
+
     # Fall back to original print for all other cases
     original_print(*args, **kwargs)
 
@@ -222,7 +221,7 @@ def print_styled(text, style=None):
             "bold": MS_BRIGHT,
             "dim": MS_DIM
         }
-        
+
         # Apply styling based on rich style name
         if style in style_map and COLORS_SUPPORTED:
             print(f"{style_map[style]}{text}{MS_RESET}")
@@ -274,6 +273,55 @@ templates = {
     "backup": "Backup important files"
 }
 
+# Pre-compiled regex patterns for dangerous commands
+DANGEROUS_PATTERNS = [
+    r"\brm\s+-rf\b",           # Recursive force delete
+    r"\bdd\b",                  # Disk destroyer
+    r"\bmkfs\b",                # Format filesystem
+    r"\bformat\b",              # Format disk
+    r"\bfdisk\b",               # Partition tool
+    r"\bmount\b",               # Mount filesystems
+    r"\bchmod\s+777\b",         # Insecure permissions
+    r"\bsudo\b",                # Superuser command
+    r"\bsu\b",                  # Switch user
+    r"\beval\b",                # Evaluate code
+    r":(){.*};:",               # Fork bomb
+    r"\bmv\s+\/\s+",            # Move from root
+    r"\bwget.*\|\s*sh\b",       # Download and run
+    r"\bcurl.*\|\s*sh\b",       # Download and run
+    r">(>)?.*\/dev\/(sd|hd|nvme)", # Write to block device
+    r"\bwipe\b",                # Wipe device
+    r"\bshred\b",               # Shred files
+]
+
+# Compile the patterns once at startup
+DANGEROUS_PATTERNS_COMPILED = [re.compile(pattern, re.IGNORECASE) for pattern in DANGEROUS_PATTERNS]
+
+# Create a single event loop for all async commands
+async_loop = None
+async_thread = None
+
+# Initialize the shared asyncio event loop
+def init_async_loop():
+    """Initialize the shared asyncio event loop in a background thread"""
+    global async_loop, async_thread
+
+    # Only initialize if not already done
+    if async_loop is not None:
+        return
+
+    # Create a new event loop
+    async_loop = asyncio.new_event_loop()
+
+    # Function to run the event loop
+    def run_event_loop():
+        asyncio.set_event_loop(async_loop)
+        async_loop.run_forever()
+
+    # Start the thread
+    async_thread = threading.Thread(target=run_event_loop, daemon=True)
+    async_thread.start()
+
 # Command groups with categories
 command_groups = {
     "file": ["ls", "cd", "cp", "mv", "rm", "mkdir", "touch", "cat", "nano", "find"],
@@ -307,7 +355,7 @@ def format_output(text, formatter, pattern=None):
     """Format output using specified formatter"""
     if formatter not in output_formatters:
         return text
-    
+
     try:
         if formatter == "grep" and pattern:
             return output_formatters[formatter](text, pattern)
@@ -322,7 +370,7 @@ def copy_to_clipboard(text):
     if not CLIPBOARD_AVAILABLE:
         print_colored("Clipboard functionality not available. Install pyperclip.", MS_YELLOW)
         return False
-    
+
     try:
         pyperclip.copy(text)
         print_colored("Copied to clipboard.", MS_GREEN)
@@ -334,7 +382,7 @@ def copy_to_clipboard(text):
 def load_templates():
     """Load command templates from file if it exists"""
     global templates
-    
+
     if os.path.exists(TEMPLATE_FILE):
         try:
             with open(TEMPLATE_FILE, 'rb') as f:
@@ -354,7 +402,7 @@ def save_templates():
 def load_command_groups():
     """Load command groups from file if it exists"""
     global command_groups
-    
+
     if os.path.exists(COMMAND_GROUPS_FILE):
         try:
             with open(COMMAND_GROUPS_FILE, 'rb') as f:
@@ -374,22 +422,22 @@ def save_command_groups():
 def load_token_cache():
     """Load token cache from file if it exists"""
     global token_cache
-    
+
     if os.path.exists(TOKEN_CACHE_FILE):
         try:
             with open(TOKEN_CACHE_FILE, 'rb') as f:
                 token_cache = pickle.load(f)
-                
+
             # Clean expired tokens
             current_time = time.time()
             expired_keys = []
             for key, (value, timestamp) in token_cache.items():
                 if current_time - timestamp > TOKEN_CACHE_EXPIRY * 86400:  # seconds in a day
                     expired_keys.append(key)
-            
+
             for key in expired_keys:
                 del token_cache[key]
-                
+
         except Exception as e:
             print_colored(f"Error loading token cache: {e}. Creating new cache.", MS_YELLOW)
             token_cache = {}
@@ -410,53 +458,33 @@ def check_dependencies():
         print_colored("Error: curl is required but not installed.", MS_RED)
         print("Please install curl to use this application.")
         sys.exit(1)
-    
+
     try:
         import json
     except ImportError:
         print_colored("Warning: json module not available. Some features may be limited.", MS_YELLOW)
-    
+
     if not PROMPT_TOOLKIT_AVAILABLE:
         print_colored("Warning: prompt_toolkit not available. Command history navigation will be disabled.", MS_YELLOW)
         print("Install prompt_toolkit for enhanced command history features.")
-    
+
     if not CLIPBOARD_AVAILABLE:
         print_colored("Warning: pyperclip not available. Clipboard integration will be disabled.", MS_YELLOW)
         print("Install pyperclip for clipboard integration features.")
 
 def is_dangerous_command(command):
     """Check if a command is potentially dangerous"""
-    # Check for dangerous patterns
-    dangerous_patterns = [
-        r"\brm\s+-rf\b",           # Recursive force delete
-        r"\bdd\b",                  # Disk destroyer
-        r"\bmkfs\b",                # Format filesystem
-        r"\bformat\b",              # Format disk
-        r"\bfdisk\b",               # Partition tool
-        r"\bmount\b",               # Mount filesystems
-        r"\bchmod\s+777\b",         # Insecure permissions
-        r"\bsudo\b",                # Superuser command 
-        r"\bsu\b",                  # Switch user
-        r"\beval\b",                # Evaluate code
-        r":(){.*};:",               # Fork bomb
-        r"\bmv\s+\/\s+",            # Move from root
-        r"\bwget.*\|\s*sh\b",       # Download and run
-        r"\bcurl.*\|\s*sh\b",       # Download and run
-        r">(>)?.*\/dev\/(sd|hd|nvme)", # Write to block device
-        r"\bwipe\b",                # Wipe device
-        r"\bshred\b",               # Shred files
-    ]
-    
-    for pattern in dangerous_patterns:
-        if re.search(pattern, command, re.IGNORECASE):
+    # Use pre-compiled patterns for better performance
+    for compiled_pattern in DANGEROUS_PATTERNS_COMPILED:
+        if compiled_pattern.search(command):
             return True
-    
+
     # Check for dangerous commands that erase data
     dangerous_commands = ["mkfs", "fdisk", "format", "deltree", "rd /s", "rmdir /s"]
     for cmd in dangerous_commands:
         if cmd in command.lower():
             return True
-            
+
     return False
 
 def verify_command(command):
@@ -464,43 +492,43 @@ def verify_command(command):
     # Skip verification if disabled
     if not VERIFY_COMMANDS:
         return True, ""
-    
+
     # Quick pass for simple commands
     simple_commands = ["ls", "pwd", "echo", "cat", "cd", "clear", "whoami", "date", "time", "help"]
     command_base = command.split()[0] if command.split() else ""
     if command_base in simple_commands:
         return True, ""
-    
+
     # Check for dangerous patterns
     if is_dangerous_command(command):
         print_colored(f"The command '{command}' appears potentially dangerous.", MS_YELLOW)
         print_colored("Suggested alternative: Run a safer version or use with caution.", MS_YELLOW)
         return True, ""  # Still return True to allow execution without prompting
-    
+
     # For other commands, just report they'll be executed without verification
     if API_KEY and False:  # Disable AI verification completely by adding False condition
         print_colored("Verifying command safety...", MS_YELLOW)
-        
+
         os_type = "Windows" if os.name == "nt" else "Unix/Linux"
-        
+
         # Prepare prompt for verification
         prompt = f"""Analyze this shell command and assess its safety:
-        
+
         COMMAND: {command}
         OPERATING SYSTEM: {os_type}
-        
+
         Respond with a JSON object that includes:
         1. "safe": boolean indicating if the command is safe to run
         2. "reason": brief explanation of your assessment
         3. "risk_level": a number from 0-10 where 0 is completely safe and 10 is extremely dangerous
-        
+
         Example response:
         {{
           "safe": true,
           "reason": "This command only lists files and does not modify anything",
           "risk_level": 0
         }}"""
-        
+
         # Call API for verification using curl
         try:
             curl_command = [
@@ -521,33 +549,33 @@ def verify_command(command):
                     }
                 })
             ]
-            
+
             result = subprocess.run(curl_command, capture_output=True, text=True)
             response = result.stdout
-            
+
             response_data = json.loads(response)
             verification = response_data["candidates"][0]["content"]["parts"][0]["text"]
-            
+
             # Clean up the verification text - remove markdown code blocks
             verification = re.sub(r'```json\s*', '', verification)
             verification = re.sub(r'```\s*', '', verification)
-            
+
             print_colored("Command Verification:", MS_CYAN)
             print_colored(f"{verification.strip()}", MS_WHITE)
-            
+
             # Extract the safety assessment
             safety_line = ""
             for line in verification.splitlines():
                 if line.strip().startswith("SAFETY:"):
                     safety_line = line.strip().lower()
                     break
-            
+
             # Try to parse the JSON to determine safety
             try:
                 verification_json = json.loads(verification.strip())
                 is_safe = verification_json.get("safe", False)
                 risk_level = verification_json.get("risk_level", 5)
-                
+
                 if not is_safe or risk_level > 5:
                     print_colored("This command may be unsafe. Please review carefully.", MS_RED)
                 else:
@@ -560,14 +588,14 @@ def verify_command(command):
                     print_colored("Command appears to be safe.", MS_GREEN)
                 else:
                     print_colored("Safety assessment unclear. Please review manually.", MS_YELLOW)
-            
+
             # No longer ask for confirmation, always proceed
             return True, verification
-            
+
         except Exception as e:
             print_colored(f"Error during command verification: {e}", MS_RED)
             return True, str(e)  # Still return True to execute
-    
+
     return True, ""  # Always allow command to execute
 
 def get_ai_response(task):
@@ -575,11 +603,11 @@ def get_ai_response(task):
     if not API_KEY:
         print_colored("Error: No API key found. Run 'api-key' to set up your API key.", MS_RED)
         return None
-    
+
     try:
         # Show thinking message
         print_colored("Thinking...", MS_YELLOW)
-        
+
         # Prepare the API request
         curl_command = [
             "curl", "-s", "-X", "POST",
@@ -599,20 +627,20 @@ def get_ai_response(task):
                 }
             })
         ]
-        
+
         # Execute the curl command
         result = subprocess.run(curl_command, capture_output=True, text=True)
         response = result.stdout
-        
+
         # Parse the response
         response_data = json.loads(response)
         return response_data["candidates"][0]["content"]["parts"][0]["text"]
-        
+
     except Exception as e:
         # Give a helpful suggestion instead of just an error
         print_colored(f"Error getting AI response: {e}", MS_RED)
         print_colored("Try running these commands instead:", MS_YELLOW)
-        
+
         # Analyze the task to suggest a relevant command
         task_lower = task.lower()
         if "list" in task_lower and "file" in task_lower:
@@ -627,7 +655,7 @@ def get_ai_response(task):
             print_colored("ifconfig || ip addr", MS_GREEN)
         else:
             print_colored("help", MS_GREEN)
-            
+
         return None
 
 async def run_command_async(command_id, command):
@@ -638,29 +666,29 @@ async def run_command_async(command_id, command):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
-        
+
         background_processes[command_id] = {
             "process": process,
             "command": command,
             "start_time": datetime.datetime.now(),
             "status": "running"
         }
-        
+
         stdout, stderr = await process.communicate()
-        
+
         # Update process status
         if process.returncode == 0:
             background_processes[command_id]["status"] = "completed"
         else:
             background_processes[command_id]["status"] = "failed"
-            
+
         background_processes[command_id]["end_time"] = datetime.datetime.now()
         background_processes[command_id]["return_code"] = process.returncode
         background_processes[command_id]["stdout"] = stdout.decode()
         background_processes[command_id]["stderr"] = stderr.decode()
-        
+
         return process.returncode
-        
+
     except Exception as e:
         print_colored(f"Error running async command: {e}", MS_RED)
         if command_id in background_processes:
@@ -671,21 +699,14 @@ async def run_command_async(command_id, command):
 def start_async_command(command):
     """Start an asynchronous command execution"""
     command_id = str(int(time.time()))
-    
-    # Create a new event loop
-    loop = asyncio.new_event_loop()
-    
-    # Create a thread to run the event loop
-    def run_async_command():
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(run_command_async(command_id, command))
-        loop.close()
-    
-    # Start the thread
-    thread = threading.Thread(target=run_async_command)
-    thread.daemon = True
-    thread.start()
-    
+
+    # Initialize the shared event loop if not already done
+    if async_loop is None:
+        init_async_loop()
+
+    # Submit the coroutine to the shared event loop
+    asyncio.run_coroutine_threadsafe(run_command_async(command_id, command), async_loop)
+
     print_colored(f"Started background command with ID: {command_id}", MS_GREEN)
     return command_id
 
@@ -693,20 +714,20 @@ def execute_command(command, is_async=False):
     """Execute a shell command and return its output"""
     if not command or command.isspace():
         return
-    
+
     # Check if command should be run asynchronously
     if is_async or command.startswith("async "):
         if command.startswith("async "):
             command = command[6:].strip()
-        
+
         if not command:
             print_colored("No command specified for async execution.", MS_YELLOW)
             return
-            
+
         command_id = start_async_command(command)
         print_colored("Command is running in the background. Use 'jobs' to check status.", MS_GREEN)
         return
-    
+
     # Verify command before execution if enabled
     if VERIFY_COMMANDS:
         safe, reason = verify_command(command)
@@ -716,9 +737,9 @@ def execute_command(command, is_async=False):
 
     # Record start time
     start_time = time.time()
-    
+
     print_colored(f"Executing: {command}", MS_CYAN)
-    
+
     # Execute the command
     try:
         # Use subprocess.Popen for streaming output if enabled
@@ -732,26 +753,26 @@ def execute_command(command, is_async=False):
                 bufsize=1,
                 universal_newlines=True
             )
-            
+
             # Set up non-blocking reads from stdout and stderr
             process.stdout.fileno()
             process.stderr.fileno()
-            
+
             print_colored("Output:", MS_CYAN)
-            
+
             # Stream output until process completes
             output_lines = []
             error_lines = []
-            
+
             while True:
                 # Check if process has finished
                 if process.poll() is not None:
                     break
-                    
+
                 # Read from stdout and stderr
                 reads = [process.stdout, process.stderr]
                 ret = select.select(reads, [], [], 0.1)
-                
+
                 for fd in ret[0]:
                     if fd is process.stdout:
                         line = fd.readline()
@@ -763,34 +784,34 @@ def execute_command(command, is_async=False):
                         if line:
                             error_lines.append(line)
                             print_colored(line, MS_RED, end="", flush=True)
-            
+
             # Read any remaining output
             remaining_output, remaining_error = process.communicate()
-            
+
             if remaining_output:
                 output_lines.append(remaining_output)
                 print(remaining_output, end="", flush=True)
-                
+
             if remaining_error:
                 error_lines.append(remaining_error)
                 print_colored(remaining_error, MS_RED, end="", flush=True)
-                
+
             # Join output lines
             output = "".join(output_lines)
             error = "".join(error_lines)
-            
+
             # Display any errors
             if error and not error.isspace():
                 print_colored(error, MS_RED)
-                
+
             # Display return code if non-zero
             if process.returncode != 0:
                 print_colored(f"Command completed with return code: {process.returncode}", MS_YELLOW)
-                
+
             # Automatically copy to clipboard if enabled and a copy formatter was used
             if " | copy" in command and USE_CLIPBOARD:
                 copy_to_clipboard(output)
-                
+
             # Format output if requested
             if " | format " in command:
                 try:
@@ -801,54 +822,54 @@ def execute_command(command, is_async=False):
                     print(formatted_output)
                 except Exception as e:
                     print_colored(f"Error formatting output: {e}", MS_RED)
-            
+
             # Calculate execution time
             end_time = time.time()
             execution_time = end_time - start_time
-            
+
             # Record in history
             timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             print_colored(f"Command completed in {execution_time:.2f} seconds.", MS_GREEN)
-            
+
             # Auto-clear the terminal after a short delay if enabled
             if AUTO_CLEAR:
                 print_colored("Terminal will be cleared in 2 seconds...", MS_YELLOW)
                 time.sleep(2)
                 os.system("cls" if os.name == "nt" else "clear")
-            
+
             return output
-            
+
         else:
             # Use simpler method if streaming is disabled
             result = subprocess.run(command, shell=True, capture_output=True, text=True)
-            
+
             # Check for errors
             if result.stderr:
                 print_colored(result.stderr, MS_RED)
-                
+
             # Print output
             if result.stdout:
                 print(result.stdout)
-                
+
             # Display return code if non-zero
             if result.returncode != 0:
                 print_colored(f"Command completed with return code: {result.returncode}", MS_YELLOW)
-                
+
             # Calculate execution time
             end_time = time.time()
             execution_time = end_time - start_time
-            
+
             # Display execution time
             print_colored(f"Command completed in {execution_time:.2f} seconds.", MS_GREEN)
-            
+
             # Auto-clear the terminal after a short delay if enabled
             if AUTO_CLEAR:
                 print_colored("Terminal will be cleared in 2 seconds...", MS_YELLOW)
                 time.sleep(2)
                 os.system("cls" if os.name == "nt" else "clear")
-            
+
             return result.stdout
-            
+
     except KeyboardInterrupt:
         print_colored("Command interrupted by user.", MS_YELLOW)
         return None
@@ -869,23 +890,23 @@ def process_user_command(command):
     """Process a built-in command or pass to shell"""
     if not command or command.isspace():
         return
-    
+
     # Don't auto-clear for certain commands that are interface-related
     skip_auto_clear = command.lower() in ["help", "exit", "quit", "clear", "history", "config", "api-key", "templates", "groups", "setup", "auto-clear", "verify", "chain"]
-    
+
     # Check for built-in commands
     if command.lower() == "exit" or command.lower() == "quit":
         print_colored("Exiting Terminal AI Assistant.", MS_GREEN)
         sys.exit(0)
-        
+
     elif command.lower() == "help":
         show_help()
         return
-        
+
     elif command.lower() == "clear":
         os.system("cls" if os.name == "nt" else "clear")
         return
-        
+
     elif command.lower() == "history":
         show_history()
         # Apply auto-clear if enabled
@@ -894,7 +915,7 @@ def process_user_command(command):
             time.sleep(2)
             os.system("cls" if os.name == "nt" else "clear")
         return
-        
+
     elif command.lower() == "config":
         show_config()
         # Apply auto-clear if enabled
@@ -903,7 +924,7 @@ def process_user_command(command):
             time.sleep(2)
             os.system("cls" if os.name == "nt" else "clear")
         return
-        
+
     elif command.lower().startswith("set "):
         set_config(command[4:])
         # Apply auto-clear if enabled
@@ -912,11 +933,11 @@ def process_user_command(command):
             time.sleep(2)
             os.system("cls" if os.name == "nt" else "clear")
         return
-        
+
     elif command.lower() == "api-key":
         set_api_key()
         return
-        
+
     elif command.lower() == "pwd":
         print(os.getcwd())
         # Apply auto-clear if enabled
@@ -925,7 +946,7 @@ def process_user_command(command):
             time.sleep(2)
             os.system("cls" if os.name == "nt" else "clear")
         return
-        
+
     elif command.lower().startswith("cd "):
         try:
             path = command[3:].strip()
@@ -944,15 +965,15 @@ def process_user_command(command):
         except Exception as e:
             print_colored(f"Error changing directory: {e}", MS_RED)
         return
-        
+
     elif command.lower() == "templates":
         manage_templates()
         return
-        
+
     elif command.lower() == "groups":
         manage_command_groups()
         return
-        
+
     elif command.lower() == "verify":
         toggle_verification()
         # Apply auto-clear if enabled
@@ -961,7 +982,7 @@ def process_user_command(command):
             time.sleep(2)
             os.system("cls" if os.name == "nt" else "clear")
         return
-        
+
     elif command.lower() == "chain":
         toggle_command_chaining()
         # Apply auto-clear if enabled
@@ -970,11 +991,11 @@ def process_user_command(command):
             time.sleep(2)
             os.system("cls" if os.name == "nt" else "clear")
         return
-        
+
     elif command.lower() == "auto-clear" or command.lower() == "autoclear":
         toggle_auto_clear()
         return
-        
+
     elif command.lower() == "jobs":
         show_background_jobs()
         # Apply auto-clear if enabled
@@ -983,7 +1004,7 @@ def process_user_command(command):
             time.sleep(2)
             os.system("cls" if os.name == "nt" else "clear")
         return
-        
+
     elif command.lower().startswith("kill "):
         kill_background_job(command[5:].strip())
         # Apply auto-clear if enabled
@@ -992,20 +1013,20 @@ def process_user_command(command):
             time.sleep(2)
             os.system("cls" if os.name == "nt" else "clear")
         return
-        
+
     elif command.lower().startswith("!"):
         run_template(command[1:])
         return
-        
+
     elif command.lower() == "setup":
         run_setup_wizard()
         return
-        
+
     # Check for command chaining
     if ALLOW_COMMAND_CHAINING and ("&&" in command or "||" in command):
         process_command_chain(command)
         return
-        
+
     # Execute as shell command
     execute_command(command)
 
@@ -1016,7 +1037,7 @@ def process_command_chain(command_chain):
     current_token = ""
     in_quotes = False
     quote_char = None
-    
+
     for char in command_chain:
         if char in ['"', "'"]:
             if not in_quotes:
@@ -1025,22 +1046,22 @@ def process_command_chain(command_chain):
             elif char == quote_char:
                 in_quotes = False
                 quote_char = None
-                
+
         if char in [' ', '\t'] and not in_quotes:
             if current_token:
                 tokens.append(current_token)
                 current_token = ""
         else:
             current_token += char
-            
+
     if current_token:
         tokens.append(current_token)
-        
+
     # Parse tokens to identify command boundaries and operators
     commands = []
     operators = []
     current_command = []
-    
+
     for token in tokens:
         if token == "&&" or token == "||":
             if current_command:
@@ -1049,20 +1070,20 @@ def process_command_chain(command_chain):
                 operators.append(token)
         else:
             current_command.append(token)
-            
+
     if current_command:
         commands.append(" ".join(current_command))
-        
+
     # Execute commands in sequence
     last_result = 0
     execute_next = True
-    
+
     for i, cmd in enumerate(commands):
         if i == 0 or execute_next:
             # Execute this command
             print(f"{MS_CYAN}Chain command {i+1}/{len(commands)}: {cmd}{MS_RESET}")
             result = execute_command(cmd)
-            
+
             # Determine if we should execute the next command
             if i < len(operators):
                 if operators[i] == "&&":
@@ -1074,7 +1095,7 @@ def process_command_chain(command_chain):
         else:
             # Skip this command based on logic
             print(f"{MS_YELLOW}Skipping command: {cmd}{MS_RESET}")
-            
+
     print(f"{MS_GREEN}Command chain completed.{MS_RESET}")
 
 def show_background_jobs():
@@ -1082,14 +1103,14 @@ def show_background_jobs():
     if not background_processes:
         print_colored("No background jobs running.", MS_YELLOW)
         return
-        
+
     print(f"{MS_CYAN}Background Jobs:{MS_RESET}")
     print(f"{'ID':<10} {'Status':<15} {'Start Time':<20} {'Command':<40}")
     print("-" * 85)
-    
+
     for job_id, job in background_processes.items():
         print(f"{job_id:<10} {job.get('status', 'unknown'):<15} {job.get('start_time').strftime('%Y-%m-%d %H:%M:%S'):<20} {job.get('command', 'unknown')[:40]}")
-        
+
     print(f"\n{MS_YELLOW}Use 'kill JOB_ID' to terminate a job.{MS_RESET}")
 
 def kill_background_job(job_id):
@@ -1097,22 +1118,22 @@ def kill_background_job(job_id):
     if not job_id:
         print_colored("No job ID specified.", MS_YELLOW)
         return
-        
+
     if job_id not in background_processes:
         print_colored(f"Job ID '{job_id}' not found.", MS_RED)
         return
-        
+
     job = background_processes[job_id]
     process = job.get("process")
-    
+
     if not process:
         print_colored(f"No process found for job ID '{job_id}'.", MS_RED)
         return
-        
+
     if job.get("status") in ["completed", "failed", "error"]:
         print_colored(f"Job already finished with status: {job.get('status')}", MS_YELLOW)
         return
-        
+
     try:
         process.terminate()
         print_colored(f"Terminated job: {job_id}", MS_GREEN)
@@ -1131,16 +1152,16 @@ def show_help():
     print("  history    - Show command history")
     print("  config     - Show current configuration")
     print("  set KEY=VAL- Change configuration settings")
-    
+
     print_styled("\nNavigation:", style="yellow")
     print("  cd DIR     - Change directory")
     print("  pwd        - Show current directory")
-    
+
     print_styled("\nAPI & Configuration:", style="yellow")
     print("  api-key    - Update your Gemini API key")
     print("  templates  - Manage command templates")
     print("  groups     - Manage command groups")
-    
+
     print_styled("\nExecution Control:", style="yellow")
     print("  format     - Format last command output")
     print("  copy       - Copy last command output to clipboard")
@@ -1152,13 +1173,13 @@ def show_help():
     print("  chain      - Toggle command chaining")
     print("  auto-clear - Toggle auto-clear terminal after commands")
     print("  setup      - Run setup wizard")
-    
+
     print_styled("\nExamples:", style="yellow")
     print("  Find all text files: find . -name \"*.txt\"")
     print("  Check disk space: df -h")
     print("  Format JSON output: cat data.json | format json")
     print("  Run in background: async long-running-command")
-    
+
     print_styled("\nFor AI assistance, simply type your task in natural language.", style="green")
 
 def show_history():
@@ -1167,9 +1188,9 @@ def show_history():
         if os.path.exists(HISTORY_FILE) and PROMPT_TOOLKIT_AVAILABLE:
             with open(HISTORY_FILE, 'r') as f:
                 lines = f.readlines()
-                
+
             print(f"{MS_CYAN}Command History:{MS_RESET}")
-            
+
             # Display with numbers, most recent at the bottom
             for i, cmd in enumerate(lines[-MAX_HISTORY:]):
                 print(f"{i+1:3d}: {cmd.strip()}")
@@ -1193,15 +1214,15 @@ def show_config():
 def set_config(config_str):
     """Set configuration values"""
     global MODEL, VERIFY_COMMANDS, ALLOW_COMMAND_CHAINING, STREAM_OUTPUT, USE_CLIPBOARD, USE_ASYNC_EXECUTION, AUTO_CLEAR
-    
+
     if not config_str or "=" not in config_str:
         print_colored("Invalid config format. Use: set KEY=VALUE", MS_YELLOW)
         return
-        
+
     key, value = config_str.split("=", 1)
     key = key.strip().lower()
     value = value.strip()
-    
+
     if key == "model":
         MODEL = value
         print_colored(f"Model set to: {MODEL}", MS_GREEN)
@@ -1241,9 +1262,9 @@ def toggle_command_chaining():
 def set_api_key():
     """Set or update API key"""
     global API_KEY
-    
+
     print_styled("Enter your Gemini API Key (input will be hidden):", style="cyan")
-    
+
     try:
         # Handle input differently based on platform
         if os.name == "nt":
@@ -1265,15 +1286,15 @@ def set_api_key():
             api_key = getpass.getpass("")
     except Exception:
         api_key = input("API Key: ")
-        
+
     if not api_key:
         print_styled("API key not provided. Keeping existing key.", style="yellow")
         return
-        
+
     # Save to .env file
     with open(".env", "w") as f:
         f.write(f"GEMINI_API_KEY={api_key}")
-        
+
     # Make sure to use the global variable
     API_KEY = api_key
     print_styled("API key updated successfully.", style="green")
@@ -1283,122 +1304,122 @@ def manage_templates():
     print(f"{MS_CYAN}Command Templates:{MS_RESET}")
     print(f"{'Name':<15} {'Description':<50}")
     print("-" * 65)
-    
+
     for name, description in templates.items():
         print(f"{name:<15} {description:<50}")
-        
+
     print("\nOptions:")
     print("  add    - Add a new template")
     print("  delete - Delete a template")
     print("  exit   - Return to main prompt")
-    
+
     choice = input(f"\n{MS_YELLOW}Action:{MS_RESET} ").strip().lower()
-    
+
     if choice == "add":
         name = input(f"{MS_YELLOW}Template name:{MS_RESET} ").strip()
         if not name:
             print_colored("Template name cannot be empty.", MS_RED)
             return
-            
+
         description = input(f"{MS_YELLOW}Description:{MS_RESET} ").strip()
         if not description:
             print_colored("Description cannot be empty.", MS_RED)
             return
-            
+
         templates[name] = description
         save_templates()
         print_colored(f"Template '{name}' added.", MS_GREEN)
-        
+
     elif choice == "delete":
         name = input(f"{MS_YELLOW}Template name to delete:{MS_RESET} ").strip()
         if not name in templates:
             print_colored(f"Template '{name}' not found.", MS_RED)
             return
-            
+
         del templates[name]
         save_templates()
         print_colored(f"Template '{name}' deleted.", MS_GREEN)
-        
+
 def run_template(template_name):
     """Run a command template"""
     if not template_name:
         print_colored("No template specified.", MS_RED)
         return
-        
+
     if template_name not in templates:
         print_colored(f"Template '{template_name}' not found.", MS_RED)
         return
-        
+
     description = templates[template_name]
     print(f"{MS_CYAN}Running template '{template_name}':{MS_RESET} {description}")
-    
+
     # Get commands for this task from AI
     commands = get_ai_response(description)
-    
+
     if not commands:
         print_colored("Failed to get commands for this template.", MS_RED)
         return
-        
+
     # Execute the commands
     lines = commands.strip().split("\n")
     for line in lines:
         line = line.strip()
         if line and not line.startswith("#"):
             execute_command(line)
-            
+
 def manage_command_groups():
     """Manage command groups"""
     print(f"{MS_CYAN}Command Groups:{MS_RESET}")
-    
+
     for group, commands in command_groups.items():
         print(f"\n{MS_YELLOW}{group}:{MS_RESET}")
         print(", ".join(commands))
-        
+
     print("\nOptions:")
     print("  add    - Add a new group")
     print("  delete - Delete a group")
     print("  modify - Modify a group")
     print("  exit   - Return to main prompt")
-    
+
     choice = input(f"\n{MS_YELLOW}Action:{MS_RESET} ").strip().lower()
-    
+
     if choice == "add":
         name = input(f"{MS_YELLOW}Group name:{MS_RESET} ").strip()
         if not name:
             print_colored("Group name cannot be empty.", MS_RED)
             return
-            
+
         commands = input(f"{MS_YELLOW}Commands (comma-separated):{MS_RESET} ").strip()
         if not commands:
             print_colored("Commands cannot be empty.", MS_RED)
             return
-            
+
         command_list = [cmd.strip() for cmd in commands.split(",")]
         command_groups[name] = command_list
         save_command_groups()
         print_colored(f"Group '{name}' added.", MS_GREEN)
-        
+
     elif choice == "delete":
         name = input(f"{MS_YELLOW}Group name to delete:{MS_RESET} ").strip()
         if not name in command_groups:
             print_colored(f"Group '{name}' not found.", MS_RED)
             return
-            
+
         del command_groups[name]
         save_command_groups()
         print_colored(f"Group '{name}' deleted.", MS_GREEN)
-        
+
     elif choice == "modify":
         name = input(f"{MS_YELLOW}Group name to modify:{MS_RESET} ").strip()
         if not name in command_groups:
             print_colored(f"Group '{name}' not found.", MS_RED)
             return
-            
+
         commands = input(f"{MS_YELLOW}New commands (comma-separated):{MS_RESET} ").strip()
         if not commands:
             print_colored("Commands cannot be empty.", MS_RED)
             return
-            
+
         command_list = [cmd.strip() for cmd in commands.split(",")]
         command_groups[name] = command_list
         save_command_groups()
@@ -1407,10 +1428,10 @@ def manage_command_groups():
 def run_setup_wizard():
     """Run setup wizard for first-time configuration"""
     global MODEL, VERIFY_COMMANDS, STREAM_OUTPUT, AUTO_CLEAR
-    
+
     print_colored("Terminal AI Assistant Setup Wizard", MS_CYAN)
     print_colored("This wizard will help you configure the assistant.", MS_YELLOW)
-    
+
     # Configure API key
     if not API_KEY:
         print_colored("\nStep 1: API Key Configuration", MS_CYAN)
@@ -1423,7 +1444,7 @@ def run_setup_wizard():
         change = input(f"{MS_YELLOW}Do you want to change it? (y/n):{MS_RESET} ").lower()
         if change == 'y':
             set_api_key()
-    
+
     # Configure model
     print_colored("\nStep 2: Model Selection", MS_CYAN)
     print_colored(f"Current model: {MODEL}", MS_YELLOW)
@@ -1432,7 +1453,7 @@ def run_setup_wizard():
     if new_model:
         MODEL = new_model
         print_colored(f"Model set to: {MODEL}", MS_GREEN)
-    
+
     # Configure verification
     print_colored("\nStep 3: Command Verification", MS_CYAN)
     print_colored("Command verification checks if commands are safe before execution.", MS_YELLOW)
@@ -1441,7 +1462,7 @@ def run_setup_wizard():
     if verify:
         VERIFY_COMMANDS = verify == 'y'
         print_colored(f"Command verification: {'Enabled' if VERIFY_COMMANDS else 'Disabled'}", MS_GREEN)
-    
+
     # Configure streaming
     print_colored("\nStep 4: Output Streaming", MS_CYAN)
     print_colored("Output streaming shows command output in real-time.", MS_YELLOW)
@@ -1450,7 +1471,7 @@ def run_setup_wizard():
     if stream:
         STREAM_OUTPUT = stream == 'y'
         print_colored(f"Output streaming: {'Enabled' if STREAM_OUTPUT else 'Disabled'}", MS_GREEN)
-        
+
     # Configure auto-clear
     print_colored("\nStep 5: Auto-Clear Terminal", MS_CYAN)
     print_colored("Auto-clear automatically clears the terminal after each command.", MS_YELLOW)
@@ -1459,7 +1480,7 @@ def run_setup_wizard():
     if auto_clear:
         AUTO_CLEAR = auto_clear == 'y'
         print_colored(f"Auto-clear terminal: {'Enabled' if AUTO_CLEAR else 'Disabled'}", MS_GREEN)
-    
+
     print_colored("\nSetup complete! The assistant is ready to use.", MS_GREEN)
     print_colored("Type 'help' to see available commands or ask me to perform tasks for you.", MS_YELLOW)
 
@@ -1467,39 +1488,43 @@ def main():
     """Main function to run the terminal assistant"""
     # Check dependencies
     check_dependencies()
-    
+
     # Load saved templates and command groups
     load_templates()
     load_command_groups()
-    
+
     # Load token cache if enabled
     if USE_TOKEN_CACHE:
         load_token_cache()
-    
+
+    # Initialize the shared asyncio event loop for background commands
+    if USE_ASYNC_EXECUTION:
+        init_async_loop()
+
     # Check for API key
     if not API_KEY:
         print_colored("No API key found. Please enter your Gemini API key.", MS_YELLOW)
         set_api_key()
-        
+
         if not API_KEY:
             print_colored("No API key provided. Some features will be disabled.", MS_RED)
-    
+
     # Display welcome message
     print_colored("Terminal AI Assistant Lite v1.0", MS_CYAN)
     print_colored("Type 'help' for available commands or ask me to perform tasks for you.", MS_GREEN)
-    
+
     # Main loop
     while True:
         try:
             # Simplified prompt that works in all environments
             prompt = "What would you like me to do? "
-            
+
             if PROMPT_TOOLKIT_AVAILABLE:
                 session = PromptSession(history=FileHistory(HISTORY_FILE))
                 user_input = session.prompt(prompt)
             else:
                 user_input = input(prompt)
-                
+
             # Skip empty inputs
             if not user_input.strip():
                 continue
@@ -1513,22 +1538,22 @@ def main():
                 # Handle as a task for the AI
                 current_dir = os.getcwd()
                 os_type = "Windows" if os.name == "nt" else "Unix/Linux"
-                
+
                 # Prepare the prompt for the AI
                 task_prompt = f"""You are a terminal command expert. Generate executable commands for the following task.
-                
+
                 TASK: {user_input}
                 CURRENT DIRECTORY: {current_dir}
                 OPERATING SYSTEM: {os_type}
-                
+
                 Respond ONLY with the exact commands to execute, one per line.
                 Do not include explanations, markdown formatting, or any text that is not meant to be executed.
                 Ensure each command is complete and executable as-is.
                 If the request cannot be satisfied with a command, respond with a single line explaining why."""
-                
+
                 # Get commands for this task from AI
                 commands = get_ai_response(task_prompt)
-                
+
                 command_executed = False
                 if commands:
                     # Split into individual commands and execute each one
@@ -1541,13 +1566,13 @@ def main():
                             else:
                                 execute_command(line)
                                 command_executed = True
-                
+
                 # If auto-clear is enabled and no command was executed, handle it here
                 if AUTO_CLEAR and not command_executed:
                     print_colored("Terminal will be cleared in 2 seconds...", MS_YELLOW)
                     time.sleep(2)
                     os.system("cls" if os.name == "nt" else "clear")
-        
+
         except KeyboardInterrupt:
             print()
             print_colored("Interrupted. Press Ctrl+C again to exit.", MS_YELLOW)
@@ -1559,16 +1584,16 @@ def main():
                 break
         except Exception as e:
             print_colored(f"Error: {e}", MS_RED)
-            
+
             # Auto-clear on error if enabled
             if AUTO_CLEAR:
                 print_colored("Terminal will be cleared in 3 seconds...", MS_YELLOW)
                 time.sleep(3)
                 os.system("cls" if os.name == "nt" else "clear")
-            
+
     # Save token cache before exit if enabled
     if USE_TOKEN_CACHE:
         save_token_cache()
 
 if __name__ == "__main__":
-    main() 
+    main()
