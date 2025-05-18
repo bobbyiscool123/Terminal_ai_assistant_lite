@@ -263,6 +263,9 @@ background_processes = {}
 # Token cache dictionary
 token_cache = {}
 
+# History items cache for !N command execution
+history_items_cache = []
+
 # Command templates
 templates = {
     "update": "Update all packages",
@@ -605,32 +608,59 @@ def get_ai_response(task):
         return None
 
     try:
-        # Show thinking message
-        print_colored("Thinking...", MS_YELLOW)
+        # Show thinking animation
+        if RICH_AVAILABLE:
+            with console.status("[bold yellow]Thinking...", spinner="dots") as status:
+                # Prepare the API request
+                curl_command = [
+                    "curl", "-s", "-X", "POST",
+                    f"{API_ENDPOINT}/{API_VERSION}/models/{MODEL}:generateContent?key={API_KEY}",
+                    "-H", "Content-Type: application/json",
+                    "-d", json.dumps({
+                        "contents": [{
+                            "parts": [{
+                                "text": task
+                            }]
+                        }],
+                        "generationConfig": {
+                            "temperature": 0.7,
+                            "topP": 0.8,
+                            "topK": 40,
+                            "maxOutputTokens": 2048
+                        }
+                    })
+                ]
 
-        # Prepare the API request
-        curl_command = [
-            "curl", "-s", "-X", "POST",
-            f"{API_ENDPOINT}/{API_VERSION}/models/{MODEL}:generateContent?key={API_KEY}",
-            "-H", "Content-Type: application/json",
-            "-d", json.dumps({
-                "contents": [{
-                    "parts": [{
-                        "text": task
-                    }]
-                }],
-                "generationConfig": {
-                    "temperature": 0.7,
-                    "topP": 0.8,
-                    "topK": 40,
-                    "maxOutputTokens": 2048
-                }
-            })
-        ]
+                # Execute the curl command
+                result = subprocess.run(curl_command, capture_output=True, text=True)
+                response = result.stdout
+        else:
+            # Fallback for non-rich environments
+            print_colored("Thinking...", MS_YELLOW)
 
-        # Execute the curl command
-        result = subprocess.run(curl_command, capture_output=True, text=True)
-        response = result.stdout
+            # Prepare the API request
+            curl_command = [
+                "curl", "-s", "-X", "POST",
+                f"{API_ENDPOINT}/{API_VERSION}/models/{MODEL}:generateContent?key={API_KEY}",
+                "-H", "Content-Type: application/json",
+                "-d", json.dumps({
+                    "contents": [{
+                        "parts": [{
+                            "text": task
+                        }]
+                    }],
+                    "generationConfig": {
+                        "temperature": 0.7,
+                        "topP": 0.8,
+                        "topK": 40,
+                        "maxOutputTokens": 2048
+                    }
+                })
+            ]
+
+            # Execute the curl command
+            result = subprocess.run(curl_command, capture_output=True, text=True)
+            response = result.stdout
 
         # Parse the response
         response_data = json.loads(response)
@@ -886,6 +916,47 @@ def toggle_auto_clear():
     print_colored(f"Auto-clear terminal: {'Enabled' if AUTO_CLEAR else 'Disabled'}", MS_GREEN)
     return AUTO_CLEAR
 
+def show_job_details(job_id):
+    """Show detailed output of a completed job"""
+    if not job_id:
+        print_colored("No job ID specified.", MS_YELLOW)
+        return
+
+    if job_id not in background_processes:
+        print_colored(f"Job ID '{job_id}' not found.", MS_RED)
+        return
+
+    job = background_processes[job_id]
+    status = job.get('status', 'unknown')
+
+    print(f"{MS_CYAN}Job Details for ID: {job_id}{MS_RESET}")
+    print(f"Command: {job.get('command', 'unknown')}")
+    print(f"Status: {status}")
+    print(f"Started: {job.get('start_time').strftime('%Y-%m-%d %H:%M:%S')}")
+
+    if 'end_time' in job:
+        print(f"Ended: {job.get('end_time').strftime('%Y-%m-%d %H:%M:%S')}")
+        elapsed = job.get('end_time') - job.get('start_time')
+        print(f"Elapsed: {elapsed}")
+
+    if 'return_code' in job:
+        print(f"Return Code: {job.get('return_code')}")
+
+    if status in ['completed', 'failed', 'error']:
+        print(f"\n{MS_CYAN}Standard Output:{MS_RESET}")
+        if 'stdout' in job and job['stdout']:
+            print(job['stdout'])
+        else:
+            print("(No output)")
+
+        if 'stderr' in job and job['stderr']:
+            print(f"\n{MS_RED}Standard Error:{MS_RESET}")
+            print(job['stderr'])
+    elif status == 'running':
+        print(f"\n{MS_YELLOW}Job is still running. Use 'kill {job_id}' to terminate.{MS_RESET}")
+    else:
+        print(f"\n{MS_YELLOW}No output available for this job.{MS_RESET}")
+
 def process_user_command(command):
     """Process a built-in command or pass to shell"""
     if not command or command.isspace():
@@ -925,8 +996,12 @@ def process_user_command(command):
             os.system("cls" if os.name == "nt" else "clear")
         return
 
-    elif command.lower().startswith("set "):
-        set_config(command[4:])
+    elif command.lower() == "set" or command.lower().startswith("set "):
+        # Handle 'set' with or without arguments
+        if command.lower() == "set":
+            set_config("")
+        else:
+            set_config(command[4:])
         # Apply auto-clear if enabled
         if AUTO_CLEAR and not skip_auto_clear:
             print_colored("Terminal will be cleared in 2 seconds...", MS_YELLOW)
@@ -998,6 +1073,15 @@ def process_user_command(command):
 
     elif command.lower() == "jobs":
         show_background_jobs()
+        # Apply auto-clear if enabled
+        if AUTO_CLEAR and not skip_auto_clear:
+            print_colored("Terminal will be cleared in 2 seconds...", MS_YELLOW)
+            time.sleep(2)
+            os.system("cls" if os.name == "nt" else "clear")
+        return
+
+    elif command.lower().startswith("jobs detail "):
+        show_job_details(command[12:].strip())
         # Apply auto-clear if enabled
         if AUTO_CLEAR and not skip_auto_clear:
             print_colored("Terminal will be cleared in 2 seconds...", MS_YELLOW)
@@ -1099,19 +1183,53 @@ def process_command_chain(command_chain):
     print(f"{MS_GREEN}Command chain completed.{MS_RESET}")
 
 def show_background_jobs():
-    """Display status of background jobs"""
+    """Display status of background jobs with elapsed time"""
     if not background_processes:
         print_colored("No background jobs running.", MS_YELLOW)
         return
 
     print(f"{MS_CYAN}Background Jobs:{MS_RESET}")
-    print(f"{'ID':<10} {'Status':<15} {'Start Time':<20} {'Command':<40}")
-    print("-" * 85)
+    print(f"{'ID':<10} {'Status':<15} {'Elapsed':<10} {'Start Time':<20} {'Command':<40}")
+    print("-" * 95)
 
-    for job_id, job in background_processes.items():
-        print(f"{job_id:<10} {job.get('status', 'unknown'):<15} {job.get('start_time').strftime('%Y-%m-%d %H:%M:%S'):<20} {job.get('command', 'unknown')[:40]}")
+    current_time = datetime.datetime.now()
+
+    for job_id, job in sorted(background_processes.items(),
+                             key=lambda x: x[1].get('start_time', datetime.datetime.now()),
+                             reverse=True):
+        # Calculate elapsed time
+        start_time = job.get('start_time')
+        if job.get('status') == 'running':
+            elapsed = current_time - start_time
+        elif 'end_time' in job:
+            elapsed = job.get('end_time') - start_time
+        else:
+            elapsed = datetime.timedelta(0)
+
+        # Format elapsed time
+        if elapsed.total_seconds() < 60:
+            elapsed_str = f"{int(elapsed.total_seconds())}s"
+        elif elapsed.total_seconds() < 3600:
+            elapsed_str = f"{int(elapsed.total_seconds() / 60)}m {int(elapsed.total_seconds() % 60)}s"
+        else:
+            elapsed_str = f"{int(elapsed.total_seconds() / 3600)}h {int((elapsed.total_seconds() % 3600) / 60)}m"
+
+        # Get status with color
+        status = job.get('status', 'unknown')
+        if status == 'running':
+            status_str = f"{MS_GREEN}{status}{MS_RESET}"
+        elif status == 'completed':
+            status_str = f"{MS_CYAN}{status}{MS_RESET}"
+        elif status in ['failed', 'error', 'terminated']:
+            status_str = f"{MS_RED}{status}{MS_RESET}"
+        else:
+            status_str = status
+
+        # Print job info
+        print(f"{job_id:<10} {status_str:<15} {elapsed_str:<10} {start_time.strftime('%Y-%m-%d %H:%M:%S'):<20} {job.get('command', 'unknown')[:40]}")
 
     print(f"\n{MS_YELLOW}Use 'kill JOB_ID' to terminate a job.{MS_RESET}")
+    print(f"{MS_YELLOW}Use 'jobs detail JOB_ID' to see detailed output of a completed job.{MS_RESET}")
 
 def kill_background_job(job_id):
     """Kill a background job by ID"""
@@ -1149,9 +1267,12 @@ def show_help():
     print("  help       - Show this help information")
     print("  exit/quit  - Exit the program")
     print("  clear      - Clear the screen")
-    print("  history    - Show command history")
+    print("  history    - Show command history with line numbers")
+    print("  !N         - Re-execute command number N from history")
     print("  config     - Show current configuration")
-    print("  set KEY=VAL- Change configuration settings")
+    print("  set        - Show all configuration options")
+    print("  set KEY    - Interactively set a configuration value")
+    print("  set KEY=VAL- Change configuration settings directly")
 
     print_styled("\nNavigation:", style="yellow")
     print("  cd DIR     - Change directory")
@@ -1166,7 +1287,8 @@ def show_help():
     print("  format     - Format last command output")
     print("  copy       - Copy last command output to clipboard")
     print("  async      - Run command in background")
-    print("  jobs       - Show running background jobs")
+    print("  jobs       - Show running background jobs with elapsed time")
+    print("  jobs detail ID - Show detailed output of a completed job")
     print("  kill ID    - Kill a background job")
     print("  !TEMPLATE  - Run a saved template")
     print("  verify     - Toggle command verification")
@@ -1183,17 +1305,29 @@ def show_help():
     print_styled("\nFor AI assistance, simply type your task in natural language.", style="green")
 
 def show_history():
-    """Display command history"""
+    """Display command history with line numbers and allow re-execution with !N"""
     try:
         if os.path.exists(HISTORY_FILE) and PROMPT_TOOLKIT_AVAILABLE:
             with open(HISTORY_FILE, 'r') as f:
                 lines = f.readlines()
 
             print(f"{MS_CYAN}Command History:{MS_RESET}")
+            print(f"{MS_YELLOW}Use !N to re-execute a command by its number{MS_RESET}")
+            print("-" * 60)
 
             # Display with numbers, most recent at the bottom
+            history_items = []
             for i, cmd in enumerate(lines[-MAX_HISTORY:]):
-                print(f"{i+1:3d}: {cmd.strip()}")
+                cmd_clean = cmd.strip()
+                history_items.append(cmd_clean)
+                print(f"{i+1:3d}: {cmd_clean}")
+
+            # Store history items in a global variable for !N access
+            global history_items_cache
+            history_items_cache = history_items
+
+            print("-" * 60)
+            print(f"{MS_YELLOW}Total: {len(history_items)} commands{MS_RESET}")
         else:
             print_colored("Command history not available. Enable prompt_toolkit for history support.", MS_YELLOW)
     except Exception as e:
@@ -1212,40 +1346,152 @@ def show_config():
     print(f"  Auto-Clear Terminal: {'Enabled' if AUTO_CLEAR else 'Disabled'}")
 
 def set_config(config_str):
-    """Set configuration values"""
+    """Set configuration values interactively or with KEY=VALUE format"""
     global MODEL, VERIFY_COMMANDS, ALLOW_COMMAND_CHAINING, STREAM_OUTPUT, USE_CLIPBOARD, USE_ASYNC_EXECUTION, AUTO_CLEAR
 
-    if not config_str or "=" not in config_str:
-        print_colored("Invalid config format. Use: set KEY=VALUE", MS_YELLOW)
+    # Define available configuration options
+    config_options = {
+        "model": {
+            "description": "AI model to use for generating commands",
+            "current": MODEL,
+            "type": "string",
+            "options": ["gemini-1.5-flash", "gemini-1.5-pro"]
+        },
+        "verify": {
+            "description": "Verify commands before execution",
+            "current": VERIFY_COMMANDS,
+            "type": "boolean"
+        },
+        "chain": {
+            "description": "Allow command chaining with && and ||",
+            "current": ALLOW_COMMAND_CHAINING,
+            "type": "boolean"
+        },
+        "stream": {
+            "description": "Stream command output in real-time",
+            "current": STREAM_OUTPUT,
+            "type": "boolean"
+        },
+        "clipboard": {
+            "description": "Enable clipboard integration",
+            "current": USE_CLIPBOARD,
+            "type": "boolean"
+        },
+        "async": {
+            "description": "Enable asynchronous command execution",
+            "current": USE_ASYNC_EXECUTION,
+            "type": "boolean"
+        },
+        "auto_clear": {
+            "description": "Automatically clear terminal after commands",
+            "current": AUTO_CLEAR,
+            "type": "boolean"
+        }
+    }
+
+    # If no arguments provided, show all available options
+    if not config_str:
+        print_colored("Available Configuration Options:", MS_CYAN)
+        print(f"{'Key':<15} {'Type':<10} {'Current Value':<15} Description")
+        print("-" * 80)
+
+        for key, info in config_options.items():
+            current = info["current"]
+            if info["type"] == "boolean":
+                current = "Enabled" if current else "Disabled"
+            print(f"{key:<15} {info['type']:<10} {str(current):<15} {info['description']}")
+
+        print("\nUsage:")
+        print("  set KEY=VALUE    - Set a specific value")
+        print("  set KEY          - Interactive prompt for value")
         return
 
-    key, value = config_str.split("=", 1)
-    key = key.strip().lower()
-    value = value.strip()
+    # Check if we're using KEY=VALUE format or just KEY
+    if "=" in config_str:
+        # Traditional KEY=VALUE format
+        key, value = config_str.split("=", 1)
+        key = key.strip().lower()
+        value = value.strip()
+    else:
+        # Interactive mode - just KEY provided
+        key = config_str.strip().lower()
 
+        # Check if key exists
+        if key not in config_options:
+            print_colored(f"Unknown configuration key: {key}", MS_YELLOW)
+            print_colored("Use 'set' without arguments to see available options.", MS_YELLOW)
+            return
+
+        # Get current value and type
+        info = config_options[key]
+        current = info["current"]
+        if info["type"] == "boolean":
+            current_str = "enabled" if current else "disabled"
+            prompt_text = f"Enable {key}? Currently {current_str} (y/n): "
+            response = input(f"{MS_YELLOW}{prompt_text}{MS_RESET}").lower()
+            value = response.startswith("y")
+        elif "options" in info:
+            # Show available options
+            print_colored(f"Available options for {key}:", MS_CYAN)
+            for i, option in enumerate(info["options"]):
+                print(f"{i+1}. {option}" + (" (current)" if option == current else ""))
+
+            # Get user selection
+            try:
+                selection = input(f"{MS_YELLOW}Enter option number or value: {MS_RESET}")
+                if selection.isdigit() and 1 <= int(selection) <= len(info["options"]):
+                    value = info["options"][int(selection)-1]
+                else:
+                    value = selection
+            except:
+                value = selection
+        else:
+            # Simple string input
+            value = input(f"{MS_YELLOW}Enter new value for {key} (current: {current}): {MS_RESET}")
+
+    # Process the configuration change
     if key == "model":
         MODEL = value
         print_colored(f"Model set to: {MODEL}", MS_GREEN)
     elif key == "verify":
-        VERIFY_COMMANDS = value.lower() in ["true", "yes", "1", "on", "enabled"]
+        if isinstance(value, bool):
+            VERIFY_COMMANDS = value
+        else:
+            VERIFY_COMMANDS = value.lower() in ["true", "yes", "y", "1", "on", "enabled"]
         print_colored(f"Command verification: {'Enabled' if VERIFY_COMMANDS else 'Disabled'}", MS_GREEN)
     elif key == "chain":
-        ALLOW_COMMAND_CHAINING = value.lower() in ["true", "yes", "1", "on", "enabled"]
+        if isinstance(value, bool):
+            ALLOW_COMMAND_CHAINING = value
+        else:
+            ALLOW_COMMAND_CHAINING = value.lower() in ["true", "yes", "y", "1", "on", "enabled"]
         print_colored(f"Command chaining: {'Enabled' if ALLOW_COMMAND_CHAINING else 'Disabled'}", MS_GREEN)
     elif key == "stream":
-        STREAM_OUTPUT = value.lower() in ["true", "yes", "1", "on", "enabled"]
+        if isinstance(value, bool):
+            STREAM_OUTPUT = value
+        else:
+            STREAM_OUTPUT = value.lower() in ["true", "yes", "y", "1", "on", "enabled"]
         print_colored(f"Output streaming: {'Enabled' if STREAM_OUTPUT else 'Disabled'}", MS_GREEN)
     elif key == "clipboard":
-        USE_CLIPBOARD = value.lower() in ["true", "yes", "1", "on", "enabled"]
+        if isinstance(value, bool):
+            USE_CLIPBOARD = value
+        else:
+            USE_CLIPBOARD = value.lower() in ["true", "yes", "y", "1", "on", "enabled"]
         print_colored(f"Clipboard integration: {'Enabled' if USE_CLIPBOARD else 'Disabled'}", MS_GREEN)
     elif key == "async":
-        USE_ASYNC_EXECUTION = value.lower() in ["true", "yes", "1", "on", "enabled"]
+        if isinstance(value, bool):
+            USE_ASYNC_EXECUTION = value
+        else:
+            USE_ASYNC_EXECUTION = value.lower() in ["true", "yes", "y", "1", "on", "enabled"]
         print_colored(f"Async execution: {'Enabled' if USE_ASYNC_EXECUTION else 'Disabled'}", MS_GREEN)
     elif key == "auto_clear" or key == "autoclear":
-        AUTO_CLEAR = value.lower() in ["true", "yes", "1", "on", "enabled"]
+        if isinstance(value, bool):
+            AUTO_CLEAR = value
+        else:
+            AUTO_CLEAR = value.lower() in ["true", "yes", "y", "1", "on", "enabled"]
         print_colored(f"Auto-clear terminal: {'Enabled' if AUTO_CLEAR else 'Disabled'}", MS_GREEN)
     else:
         print_colored(f"Unknown configuration key: {key}", MS_YELLOW)
+        print_colored("Use 'set' without arguments to see available options.", MS_YELLOW)
 
 def toggle_verification():
     """Toggle command verification"""
@@ -1336,6 +1582,12 @@ def manage_templates():
             print_colored(f"Template '{name}' not found.", MS_RED)
             return
 
+        # Ask for confirmation before deleting
+        confirm = input(f"{MS_YELLOW}Are you sure you want to delete template '{name}'? (y/n):{MS_RESET} ").lower()
+        if confirm != 'y':
+            print_colored("Deletion cancelled.", MS_YELLOW)
+            return
+
         del templates[name]
         save_templates()
         print_colored(f"Template '{name}' deleted.", MS_GREEN)
@@ -1403,6 +1655,12 @@ def manage_command_groups():
         name = input(f"{MS_YELLOW}Group name to delete:{MS_RESET} ").strip()
         if not name in command_groups:
             print_colored(f"Group '{name}' not found.", MS_RED)
+            return
+
+        # Ask for confirmation before deleting
+        confirm = input(f"{MS_YELLOW}Are you sure you want to delete group '{name}'? (y/n):{MS_RESET} ").lower()
+        if confirm != 'y':
+            print_colored("Deletion cancelled.", MS_YELLOW)
             return
 
         del command_groups[name]
@@ -1516,8 +1774,20 @@ def main():
     # Main loop
     while True:
         try:
+            # Add visual separation between commands for better readability
+            print("\n" + "-" * 60)
+
+            # Create a persistent prompt indicator that shows background job status
+            prompt_prefix = ""
+            if background_processes:
+                # Count running jobs
+                running_jobs = sum(1 for job in background_processes.values()
+                                  if job.get("status") == "running")
+                if running_jobs > 0:
+                    prompt_prefix = f"(bg:{running_jobs}) "
+
             # Simplified prompt that works in all environments
-            prompt = "What would you like me to do? "
+            prompt = f"{prompt_prefix}What would you like me to do? "
 
             if PROMPT_TOOLKIT_AVAILABLE:
                 session = PromptSession(history=FileHistory(HISTORY_FILE))
@@ -1529,9 +1799,20 @@ def main():
             if not user_input.strip():
                 continue
 
+            # Check for history execution with !N
+            if user_input.startswith("!") and user_input[1:].isdigit():
+                history_index = int(user_input[1:]) - 1
+                if 0 <= history_index < len(history_items_cache):
+                    history_command = history_items_cache[history_index]
+                    print_colored(f"Executing history command: {history_command}", MS_CYAN)
+                    user_input = history_command
+                else:
+                    print_colored(f"Invalid history index: {history_index+1}", MS_RED)
+                    continue
+
             # Continue with the rest of the function
             # Check if this looks like a command or a task description
-            if user_input.startswith("!") or any(user_input.startswith(cmd) for cmd in ["help", "exit", "quit", "clear", "history", "config", "set ", "cd ", "pwd", "api-key", "templates", "groups", "verify", "chain", "auto-clear", "jobs", "kill ", "setup"]):
+            if user_input.startswith("!") or any(user_input.startswith(cmd) for cmd in ["help", "exit", "quit", "clear", "history", "config", "set", "cd ", "pwd", "api-key", "templates", "groups", "verify", "chain", "auto-clear", "jobs", "kill ", "setup"]):
                 # Handle as a built-in command
                 process_user_command(user_input)
             else:
