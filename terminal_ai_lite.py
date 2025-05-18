@@ -1751,6 +1751,9 @@ def set_api_key():
     with open(".env", "w") as f:
         f.write(f"GEMINI_API_KEY={api_key}")
 
+    # Reload the environment variables to ensure the API key is available
+    load_dotenv(override=True)
+
     # Make sure to use the global variable
     API_KEY = api_key
     print_styled("API key updated successfully.", style="green")
